@@ -1,0 +1,113 @@
+load "iovtk"
+// Parameters for the simluation
+int m = 50; //number of elements  
+real L = 1; // length of the square 
+real rho = 100; // density of the fluid (TO BE VARIED)
+real mu = 0.1; // dynamic viscosity of the fluid (TO BE VARIED)
+
+real uin = 1; // inflow velocity (u)
+func fx = 0; // force per unit volume in x direction
+func fy = 0; // force per unit volume in y direction
+
+// Arrays that help define the Boundary Conditions 
+int[int] noslip = [1, 2, 4]; 
+
+int[int] inflow = [3];
+
+
+// this has to do with the vtk file
+int[int] orderOut = [1, 1, 1, 1];
+
+// Time-step and duration of the simulation 
+real dt = 0.25;
+real T = 4;
+
+real eps = 1e-3; 
+
+//Define useful macros, in order to later define easier the NS equations. 
+macro div(u) (dx(u#x) + dy(u#y))//
+macro grad(u) [dx(u), dy(u)]//
+macro Grad(u) [grad(u#x), grad(u#y)]//
+
+//record the time
+real cpu;
+real tabcpu;
+
+// define and construct the mesh
+border C1(t = 0, L){ x = t; y = 0; label = 1; } // noslip (bottom of the mesh)
+border C2(t = 0, L){ x = L; y = t; label = 2; } // noslip (right of the mesh)
+border C3(t = 0, L){ x = L-t; y = L; label = 3; } // inflow (top of the mesh )
+border C4(t = 0, L){ x = 0; y = L-t; label = 4; } // noslip (left of the mesh )
+mesh th = buildmesh( C1(m) + C2(m) + C3(m*4) + C4(m) ); // same number of elements in every edge
+plot(th);
+
+fespace UPh(th, [P2,P2,P1]);
+UPh [ux, uy, p]; // velocity components (x and y-directions) and pressure component (second order for velocity and first order for pressure)
+UPh [uhx, uhy, ph]; // velocity and pressure components 
+UPh [upx, upy, pp]; // velocity and pressure components 
+
+//Solve the problem in a linear form 
+varf navierstokes([ux, uy, p], [uhx, uhy, ph]) // define the equations
+= int2d(th)(
+    rho/dt* [ux, uy]'* [uhx, uhy]
++ mu* (Grad(u):Grad(uh))
+- p* div(uh)
+- ph* div(u)
+- 1e-10 *p*ph // stabilisation term to fix the constant part of the pressure
+)
+
++ int2d(th) (
+    [fx, fy]' * [uhx, uhy]
++ rho/dt* [convect([upx, upy], -dt, upx), convect([upx, upy], -dt, upy)]'* [uhx, uhy]
+)
+
++ on(noslip, ux=0, uy=0) // boundary conditions of noslip
++ on(inflow, ux=uin, uy=0) // boundary conditions of inflow
+;
+
+//Initialization - Initial conditions of the simulation
+[ux, uy, p]=[0, 0, 0];
+
+matrix<real> NS = navierstokes(UPh, UPh); // bilinear form. This is the "A" in the Ax=b linear formulation
+real[int] NSrhs = navierstokes(0, UPh); // linear form. This is the "b" vector in the linear formulation
+
+
+// Create a 2D matrices to store the ux[], uy[] and p[] vectors at each timestep
+real[int, int] uxMatrix(T/dt, UPh.ndof), uyMatrix(T/dt, UPh.ndof), pMatrix(T/dt, UPh.ndof);
+
+set(NS, sparams = "-ksp_type gmres -pc_type ilu");
+
+// Time-stepping loop
+// This is where the "actual simulation" takes place
+for(int j = 0; j < T/dt; j++){
+    [upx, upy, pp]=[ux, uy, p]; // update values for the velocity and pressure components
+
+    NSrhs = navierstokes(0, UPh);
+    ux[] = NS^-1 * NSrhs;
+
+    for (int i = 0; i < UPh.ndof; i++) {
+            uxMatrix(j, i) = ux[][i];
+            uyMatrix(j, i) = uy[][i];
+            pMatrix(j, i) = p[][i];
+        }
+    savevtk("lid_driven_cavity.vtk", th, [ux, uy, p], dataname = "velocity pressure", order = orderOut, append = j ? true : false);
+
+    plot( [ux,uy], wait=0, cmm=j);
+}
+
+// Write the matrices to separate files, for further processing 
+{ofstream fout("uxMatrix.txt");
+fout << uxMatrix << endl;
+}
+
+{ofstream fout("uyMatrix.txt");
+fout << uyMatrix << endl;
+}
+
+{ofstream fout("pMatrix.txt");
+fout << pMatrix << endl;
+}
+
+// count and report the CPU time
+cout << " CPU = " << clock()-cpu << endl ;
+tabcpu = clock()-cpu;
