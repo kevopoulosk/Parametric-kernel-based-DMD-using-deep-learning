@@ -1,0 +1,90 @@
+//load "PETSc"
+include "macro_ddm.idp"
+load "iovtk"
+
+
+// number of elements
+int n1 = 40; 
+int n2 = 70; 
+// initialise some parameters
+real mu = 0.2; // Dynamic iscosity of the fluid
+real rho = 100; // density of the fluid
+real dt = 0.2; // time-stepping of the simulation
+real T = 50; // total time of the simulation 
+
+// kinematic viscosity
+real nu = mu/rho; 
+// timestep to save the data 
+int saveEach = 0.5/dt;
+// this has to do with the vtk file
+int[int] orderOut = [1, 1, 1, 1];
+
+// useful for the definiton of NS equations
+macro div(u) (dx(u#x) + dy(u#y))//
+macro grad(u) [dx(u), dy(u)]//
+macro Grad(u) [grad(u#x), grad(u#y)]//
+
+func fx = 0;
+func fy = 0;
+
+// define labels for the boundary conditions
+int Wall = 1;
+int Inlet = 2;
+int Outlet = 3;
+int Cylinder = 4;
+
+// Consruct the mesh (not sure of the boundary conditions yet)
+border ba(t=0,1.0){x=t*10.0-1.0;y=-1.0;label=Wall;};  // bottom side of the rectangle - noslip
+border bb(t=0,1.0){x=9.0;y=2.0*t-1.0;label=Outlet;}; // right side of the rectangle - outlet (noslip)
+border bc(t=0,1.0){x=9.0-10.0*t;y=1.0;label=Wall;}; // top side of the rectangle - noslip
+border bd(t=0,1.0){x=-1.0;y=1.0-2.0*t;label=Inlet;}; // left of the rectangle - inlet
+border cc(t=0,2*pi){x=cos(t)*0.36+0.875; y=sin(t)*0.36;label=Cylinder;}; // construction of cylinder - noslip
+mesh Mesh = buildmesh(ba(n2)+bb(n1)+bc(n2)+bd(n1)+cc(-n2)); // build the mesh
+plot(Mesh, wait=true);
+
+// Define the function space 
+fespace UPh(Mesh, [P2,P2,P1]);
+UPh [ux, uy, p]; // velocity components (x and y-directions) and pressure component (second order for velocity and first order for pressure)
+UPh [uhx, uhy, ph]; // velocity and pressure components 
+UPh [upx, upy, pp]; // velocity and pressure components
+
+// define the variational form of NS equations
+varf navierstokes([ux, uy, p], [uhx, uhy, ph])
+  = int2d(Mesh)(
+      1/dt* [ux, uy]'* [uhx, uhy]
+    + nu * (Grad(u):Grad(uh))
+    - p* div(uh)
+    - ph* div(u)
+    - 1e-10 *p*ph // stabilisation term for the pressure
+    )
+  + int2d(Mesh) (
+      [fx, fy]' * [uhx, uhy]
+    + 1/dt* [convect([upx, upy], -dt, upx), convect([upx, upy], -dt, upy)]'* [uhx, uhy]
+    )
+  + on(Wall, ux=0, uy=0) // noslip conditions on the walls
+  + on(Inlet, ux=1-y^2, uy=0) // parabolic function for the flow at the inlet
+  + on(Outlet, p=0)
+  + on(Cylinder, ux=0, uy=0) // noslip Dirichlet BC on the cylinder
+;
+
+[ux, uy, p]=[0, 0, 0]; // initial conditions for the simulation
+
+matrix<real> NS = navierstokes(UPh, UPh); // bilinear form
+real[int] NSrhs = navierstokes(0, UPh); // linear form
+
+// set(NS, sparams = "-pc_type lu"); 
+set(NS, sparams = "-ksp_type gmres -pc_type ilu");
+
+for(int i = 0; i < T/dt; i++)
+{
+  [upx, upy, pp]=[ux, uy, p];
+
+  NSrhs = navierstokes(0, UPh);
+  ux[] = NS^-1 * NSrhs;
+  plot([ux, uy], wait=0, cmm=i);
+  if (i % saveEach == 0)
+    savevtk("flow_around_cylinder.vtk", Mesh, [ux, uy, p], dataname=" u v p", order=orderOut,
+            append = i ? true : false);
+
+}
+plot([ux,uy], p, wait=1);
