@@ -1,0 +1,101 @@
+//real uin = 1;
+int m = 30; //number of elements  
+real L = 1; // length of the square
+
+// define and construct the mesh
+border C1(t = 0, L){ x = t; y = 0; label = 1; } // noslip (bottom of the mesh)
+border C2(t = 0, L){ x = L; y = t; label = 2; } // noslip (right of the mesh)
+border C3(t = 0, L){ x = L-t; y = L; label = 3; } // inflow (top of the mesh )
+border C4(t = 0, L){ x = 0; y = L-t; label = 4; } // noslip (left of the mesh )
+mesh Th = buildmesh( C1(m) + C2(m) + C3(m) + C4(m)); // same number of elements in every edge
+plot(Th, wait=1);
+
+
+func real StationaryNS(real VelocityInlet, int numsample) {
+  
+
+  real mu = 0.01;
+  real rho = 1;
+  real nu = mu/rho;
+
+
+  
+
+  fespace Vh(Th,[P2,P2,P1]);
+  Vh [u,v,p],[uu,vv,pp],[up,vp,q];
+
+  macro div(u,v)(dx(u)+dy(v))//
+  macro grad(u)[dx(u),dy(u)]//
+
+  int i,j,k;
+  real Re=(1/nu)*VelocityInlet*L;
+
+  problem NSunst([u,v,p],[uu,vv,pp],solver=sparsesolver)=
+    int2d(Th)(nu*(grad(u)'*grad(uu)+grad(v)'*grad(vv)))
+    +int2d(Th)([up,vp]'*grad(u)*uu+[up,vp]'*grad(v)*vv)
+    -int2d(Th)(p*div(uu,vv)+pp*div(u,v))
+    +int2d(Th)(1.e-10*p*pp)
+    +on(1,2,4,u=0,v=0)
+    +on(3,u=VelocityInlet,v=0)
+    ;
+
+  for(int k=0;k<30;k++){
+    NSunst;
+    up[]=u[];
+    
+  }
+
+
+  for (i=0;i<10;i++){ // here starts the fixed-point iteration for the nonlinearity
+  NSunst;
+  up[]=u[];
+  }
+
+
+  plot([u,v],p,wait=0, cmm="Reynolds="+Re+" Sample No."+numsample);
+
+  string PathToDirectory = "/Users/konstantinoskevopoulos/Documents/SnapshotData/lid_driven_cavity/";
+  {ofstream fout(PathToDirectory+"/u"+"/sample_"+numsample+"_u.txt");
+  fout << u[] << endl;
+  }
+
+  {ofstream fout(PathToDirectory+"/v"+"/sample_"+numsample+"_v.txt");
+  fout << v[] << endl;
+  }
+
+  {ofstream fout(PathToDirectory+"/p"+"/sample_"+numsample+"_p.txt");
+  fout << p[] << endl;
+  }
+ 
+  cout << "Sample No."+ numsample+ " saved" << endl;
+}
+
+
+
+
+// Function to generate random numbers within a given range
+func real RNG(real low, real high, int size) {
+    return low + (high - low) * randreal1();
+}
+
+real SampleSize = 220.; // Size of the array of andom numbers 
+real Re20 = 0.2;              // Velocity for Re=20
+real Re100 = 1.;              // Velocity for Re=100
+
+
+real[int] velocitiesSample(SampleSize);
+
+for (int i = 0; i < SampleSize; i++){
+  real randomnum = RNG(Re20, Re100, SampleSize);
+  velocitiesSample(i) = randomnum;
+  StationaryNS(randomnum, i);
+
+}
+
+string PathToDirectory = "/Users/konstantinoskevopoulos/Documents/SnapshotData/lid_driven_cavity/";
+
+{ofstream fout(PathToDirectory+"/velocities"+"/velocities_sampled.txt");
+  fout << velocitiesSample << endl;
+}
+cout << "Array of randomly sampled velocities is saved." << endl;
+
