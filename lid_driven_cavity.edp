@@ -2,10 +2,14 @@ load "iovtk"
 // Parameters for the simluation
 int m = 50; //number of elements  
 real L = 1; // length of the square 
-real rho = 100; // density of the fluid (TO BE VARIED)
-real mu = 0.1; // dynamic viscosity of the fluid (TO BE VARIED)
+real rho = 1; // density of the fluid (TO BE VARIED). Now we have Re = 400
+real mu = 0.01; // dynamic viscosity of the fluid (TO BE VARIED)
 
-real uin = 1; // inflow velocity (u)
+real nu = mu/rho;
+
+real uin = 50; // inflow velocity (u)
+
+real Re=(1/nu)*uin*L;
 func fx = 0; // force per unit volume in x direction
 func fy = 0; // force per unit volume in y direction
 
@@ -14,15 +18,12 @@ int[int] noslip = [1, 2, 4];
 
 int[int] inflow = [3];
 
-
 // this has to do with the vtk file
 int[int] orderOut = [1, 1, 1, 1];
 
 // Time-step and duration of the simulation 
-real dt = 0.25;
-real T = 4;
-
-real eps = 1e-3; 
+real dt = 0.01;
+real T = 5;
 
 //Define useful macros, in order to later define easier the NS equations. 
 macro div(u) (dx(u#x) + dy(u#y))//
@@ -38,8 +39,9 @@ border C1(t = 0, L){ x = t; y = 0; label = 1; } // noslip (bottom of the mesh)
 border C2(t = 0, L){ x = L; y = t; label = 2; } // noslip (right of the mesh)
 border C3(t = 0, L){ x = L-t; y = L; label = 3; } // inflow (top of the mesh )
 border C4(t = 0, L){ x = 0; y = L-t; label = 4; } // noslip (left of the mesh )
-mesh th = buildmesh( C1(m) + C2(m) + C3(m*4) + C4(m) ); // same number of elements in every edge
-plot(th);
+mesh th = buildmesh( C1(m) + C2(m) + C3(m) + C4(m)); // same number of elements in every edge
+plot(th, wait=1);
+savemesh(th, "mesh_lid_driven_cavity.msh");
 
 fespace UPh(th, [P2,P2,P1]);
 UPh [ux, uy, p]; // velocity components (x and y-directions) and pressure component (second order for velocity and first order for pressure)
@@ -62,7 +64,8 @@ varf navierstokes([ux, uy, p], [uhx, uhy, ph]) // define the equations
 )
 
 + on(noslip, ux=0, uy=0) // boundary conditions of noslip
-+ on(inflow, ux=uin, uy=0) // boundary conditions of inflow
++ on(inflow, ux=uin*sin(y), uy=0) // boundary conditions of inflow
+
 ;
 
 //Initialization - Initial conditions of the simulation
@@ -90,11 +93,11 @@ for(int j = 0; j < T/dt; j++){
             uyMatrix(j, i) = uy[][i];
             pMatrix(j, i) = p[][i];
         }
-    savevtk("lid_driven_cavity.vtk", th, [ux, uy, p], dataname = "velocity pressure", order = orderOut, append = j ? true : false);
+    savevtk("lid_driven_cavity.vtk", th, ux, uy, p, dataname = "velocity_X velocity_Y pressure", order = orderOut, append = j ? true : false);
 
-    plot( [ux,uy], wait=0, cmm=j);
+    plot( [ux,uy], wait=0, cmm=j+"Reynolds="+Re);
 }
-
+plot([ux, uy], p, wait=1, cmm="Reynolds="+Re);
 // Write the matrices to separate files, for further processing 
 {ofstream fout("uxMatrix.txt");
 fout << uxMatrix << endl;

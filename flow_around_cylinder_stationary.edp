@@ -1,27 +1,40 @@
-real uin = 1; // initial velocity
-int m = 25; //number of elements  
-real L = 1; // length of the square
+real uin = 0.2; // initial velocity
+int n1 = 35; //number of elements  
+int n2=50;
 
 
-string PathToDirectory = "/Users/konstantinoskevopoulos/Documents/SnapshotData/lid_driven_cavity/";
+string PathToDirectory = "/Users/konstantinoskevopoulos/Documents/SnapshotData/flow_around_cylinder/";
 
-// define and construct the mesh
-border C1(t = 0, L){ x = t; y = 0; label = 1; } // noslip (bottom of the mesh)
-border C2(t = 0, L){ x = L; y = t; label = 2; } // noslip (right of the mesh)
-border C3(t = 0, L){ x = L-t; y = L; label = 3; } // inflow (top of the mesh )
-border C4(t = 0, L){ x = 0; y = L-t; label = 4; } // noslip (left of the mesh )
-mesh Th = buildmesh( C1(m) + C2(m) + C3(m) + C4(m)); // same number of elements in every edge
-plot(Th, wait=1);
+// define labels for the boundary conditions
+int Wall = 1;
+int Inlet = 2;
+int Outlet = 3;
+int Cyl = 4;
 
-cout << "Number of Elements: " + Th.nt << endl;
+// Consruct the mesh (not sure of the boundary conditions yet)
+border B1(t=0,1){x=0.0+t*2.2; y=0.0; label = Wall;}; // Bottom wall
+border B2(t=0,1){x=2.2; y=0.0+t*0.41; label = Outlet;}; // Right side-outlet
+border B3(t=0,1){x=2.2-t*2.2; y=0.41; label = Wall;}; // Top wall
+border B4(t=0,1){x=0.0; y=0.41-t*0.41; label = Inlet;}; // Left side-inlet 
+
+border Cylinder(t=0, 2*pi){
+    real xcylinder = 0.2 + 0.05 * cos(t);
+    real ycylinder = 0.2 + 0.05 * sin(t);
+    x = xcylinder;
+    y = ycylinder;
+    label = Cyl;
+}
 
 
+mesh Th = buildmesh(B1(n2) + B2(n1) + B3(n2) + B4(n1) + Cylinder(-n1)); // build the mesh
 
-real mu = 0.01;
+plot(Th, wait=true);
+
+real mu = 0.001;
 real rho = 1;
 real nu = mu/rho;
 
-real Re = (1/nu)*uin*L;
+real Re = (1/nu)*uin*0.1;
 
 int nsnsh = 240;
 
@@ -41,8 +54,10 @@ int2d(Th)(nu*(grad(u)'*grad(uu)+grad(v)'*grad(vv)))
 +int2d(Th)([up,vp]'*grad(u)*uu+[up,vp]'*grad(v)*vv)
 -int2d(Th)(p*div(uu,vv)+pp*div(u,v))
 +int2d(Th)(1.e-10*p*pp)
-+on(1,2,4,u=0,v=0)
-+on(3,u=uin,v=0)
++ on(Wall, u=0, v=0) // noslip conditions on the walls
++ on(Inlet, u=(4*uin*y*(0.41-y))/0.41^2, v=0) // parabolic function for the flow at the inlet
++ on(Outlet, p=0)
++ on(Cyl, u=0, v=0) // noslip Dirichlet BC on the cylinder
 ;
 
 
@@ -53,7 +68,7 @@ func real RNG(real low, real high, int size) {
 
 real SampleSize = 240.; // Size of the array of andom numbers 
 real Re20 = 0.2;              // Velocity for Re=20
-real Re1000 = 10.;              // Velocity for Re=1000
+real Re1000 = 2.5;              // Velocity for Re=250
 
 
 real[int] velocitiesSample(SampleSize);
@@ -63,10 +78,8 @@ for (j=0;j<nsnsh;j++){
     for (i=0;i<25;i++){ // here starts the fixed-point iteration for the nonlinearity
         NSunst;
         up[]=u[];
-
 }
     usnsh[j][]=u[];
-    
     // plot([usnsh[j],vsnsh[j]], wait = 1, cmm="Reynolds="+Re);
 
     {ofstream fout(PathToDirectory+"/u"+"/sample_"+j+"_u.txt");
@@ -85,9 +98,10 @@ for (j=0;j<nsnsh;j++){
 
 
     real randomnum = RNG(Re20, Re1000, SampleSize);
+    cout << "The randomly sampled velocity is "+randomnum << endl;
     velocitiesSample(j) = randomnum;
     uin = randomnum;
-    Re = (1/nu)*randomnum*L;
+    Re = (1/nu)*randomnum*0.1;
 }
 
 
