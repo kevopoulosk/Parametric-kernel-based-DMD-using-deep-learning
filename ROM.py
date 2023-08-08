@@ -80,7 +80,7 @@ def SVD(directory, attribute):
 
 generated_data_directory = "/Users/konstantinoskevopoulos/Documents/SnapshotData/lid_driven_cavity/"
 # number of sampled velocities
-num_samples = 220
+num_samples = 240
 
 # Read number of vertices and create empty matrix for data storage
 v_num = vertices_num(generated_data_directory + 'u/sample_0_u.txt')
