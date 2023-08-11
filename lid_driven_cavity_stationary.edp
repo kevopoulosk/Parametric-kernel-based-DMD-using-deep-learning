@@ -53,21 +53,21 @@ func real RNG(real low, real high, int size) {
 
 real SampleSize = 240.; // Size of the array of andom numbers 
 real Re20 = 0.2;              // Velocity for Re=20
-real Re1000 = 10.;              // Velocity for Re=1000
+real Re4000 = 40.;              // Velocity for Re=4000
 
 
 real[int] velocitiesSample(SampleSize);
 
 
 for (j=0;j<nsnsh;j++){
-    for (i=0;i<25;i++){ // here starts the fixed-point iteration for the nonlinearity
+    for (i=0;i<225;i++){ // here starts the fixed-point iteration for the nonlinearity
         NSunst;
         up[]=u[];
 
 }
     usnsh[j][]=u[];
     
-    // plot([usnsh[j],vsnsh[j]], wait = 1, cmm="Reynolds="+Re);
+    plot([usnsh[j],vsnsh[j]], wait = 1, cmm="Reynolds="+Re);
 
     {ofstream fout(PathToDirectory+"/u"+"/sample_"+j+"_u.txt");
     fout << usnsh[j][] << endl;
@@ -84,7 +84,7 @@ for (j=0;j<nsnsh;j++){
     cout << "Sample No."+ j+ " saved" << endl;
 
 
-    real randomnum = RNG(Re20, Re1000, SampleSize);
+    real randomnum = RNG(Re20, Re2200, SampleSize);
     velocitiesSample(j) = randomnum;
     uin = randomnum;
     Re = (1/nu)*randomnum*L;

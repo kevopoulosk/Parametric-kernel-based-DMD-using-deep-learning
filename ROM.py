@@ -1,13 +1,13 @@
 import numpy as np
 import matplotlib.pyplot as plt
-
+from sklearn.decomposition import PCA
 from sklearn.decomposition import TruncatedSVD
 
 
 def vertices_num(directory_to_txt):
     TargetMSH = open(directory_to_txt, "r+")
 
-    ### Read the total number of vertices(points) from .msh file
+    # Read the total number of vertices(points) from .msh file
     line = TargetMSH.readline()
     words = line.strip().split()
     v_num = int(words[0])
@@ -48,16 +48,17 @@ def SVD(directory, attribute):
     training_ratio = 0.75
     training_samples = int(training_ratio * sampled_velocities)
 
-    training_X = snapshot_matrix[:, :training_samples]
-
+    initial_X = snapshot_matrix[:, :training_samples]
+    mean_X = np.expand_dims(np.mean(initial_X, axis=1), axis=1)
+    training_X = initial_X - mean_X
     desired_components = 10
     svd = TruncatedSVD(n_components=desired_components, n_iter=7, random_state=42)
-    svd.fit(training_X)
+    svd.fit(training_X.T)
 
     system_energy = np.sum(svd.explained_variance_ratio_)
     while system_energy < 0.999:
         svd = TruncatedSVD(n_components=desired_components, n_iter=7, random_state=42)
-        svd.fit(training_X)
+        svd.fit(training_X.T)
 
         system_energy = np.sum(svd.explained_variance_ratio_)
         if system_energy < 0.999:
@@ -75,7 +76,7 @@ def SVD(directory, attribute):
     plt.title("Singular values")
     plt.show()
 
-    return svd.fit_transform(training_X), snapshot_matrix
+    return svd.fit_transform(training_X), training_X
 
 
 generated_data_directory = "/Users/konstantinoskevopoulos/Documents/SnapshotData/lid_driven_cavity/"
@@ -107,9 +108,9 @@ np.save(generated_data_directory + 'ROM/PODp.npy', plist)
 print('Snapshot matrix shape: ', ulist.shape)
 
 
-res, snapshot = SVD(directory="/Users/konstantinoskevopoulos/Documents/SnapshotData/lid_driven_cavity/ROM/", attribute="u")
-plt.figure(figsize=(10,6))
-plt.contourf(snapshot)
+res, train = SVD(directory="/Users/konstantinoskevopoulos/Documents/SnapshotData/flow_around_cylinder/ROM/", attribute="u")
+plt.figure(figsize=(10,7))
+plt.imshow(train)
 plt.colorbar()
 plt.xlabel("Number of snapshots-samples")
 plt.ylabel("Degrees of freedom of the mesh")
