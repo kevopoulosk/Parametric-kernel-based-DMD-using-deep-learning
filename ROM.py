@@ -298,8 +298,8 @@ def Dim_Reduction(directory, attr):
 
 rb_coeff_u = Dim_Reduction(directory="/Users/konstantinoskevopoulos/Documents/SnapshotData/flow_around_cylinder/ROM/",
                          attr="u")
-rb_coeff_v = Dim_Reduction(directory="/Users/konstantinoskevopoulos/Documents/SnapshotData/flow_around_cylinder/ROM/", attr="v")
-rb_coeff_p = Dim_Reduction(directory="/Users/konstantinoskevopoulos/Documents/SnapshotData/flow_around_cylinder/ROM/", attr="p")
+# rb_coeff_v = Dim_Reduction(directory="/Users/konstantinoskevopoulos/Documents/SnapshotData/flow_around_cylinder/ROM/", attr="v")
+# rb_coeff_p = Dim_Reduction(directory="/Users/konstantinoskevopoulos/Documents/SnapshotData/flow_around_cylinder/ROM/", attr="p")
 
 RBF_Interpolate(directory_vel="/Users/konstantinoskevopoulos/Documents/SnapshotData/flow_around_cylinder/velocities",
                 directory_rom="/Users/konstantinoskevopoulos/Documents/SnapshotData/flow_around_cylinder/ROM",
