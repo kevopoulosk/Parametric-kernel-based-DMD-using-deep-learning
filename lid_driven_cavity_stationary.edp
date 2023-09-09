@@ -1,5 +1,5 @@
 real uin = 1; // initial velocity
-int m = 25; //number of elements  
+int m = 30; //number of elements  
 real L = 1; // length of the square
 
 
@@ -23,18 +23,30 @@ real nu = mu/rho;
 
 real Re = (1/nu)*uin*L;
 
-int nsnsh = 240;
+
+real SampleSize = 240.; // Size of the array of andom numbers 
+real Re20 = 0.2;              // Velocity for Re=20
+real Re1200 = 12.;              // Velocity for Re=1000
+real[int] velocitiesSample(SampleSize);
+
+// Function to generate random numbers within a given range
+func real RNG(real low, real high, int size) {
+    return low + (high - low) * randreal1();
+}
+
+int i,j;
+
+fespace Vh(Th,P2);
+Vh u, v, uu, vv, up, vp;
+fespace Ph(Th, P1);
+Ph p, pp, q;
 
 
 
-fespace Vh(Th,[P2,P2,P1]);
-Vh [u,v,p],[uu,vv,pp],[up,vp,q];
-Vh[int] [usnsh,vsnsh,psnsh](nsnsh);
 
 macro div(u,v)(dx(u)+dy(v))//
 macro grad(u)[dx(u),dy(u)]//
 
-int i,j,k;
 
 problem NSunst([u,v,p],[uu,vv,pp],solver=sparsesolver)=
 int2d(Th)(nu*(grad(u)'*grad(uu)+grad(v)'*grad(vv)))
@@ -46,73 +58,43 @@ int2d(Th)(nu*(grad(u)'*grad(uu)+grad(v)'*grad(vv)))
 ;
 
 
-// Function to generate random numbers within a given range
-func real RNG(real low, real high, int size) {
-    return low + (high - low) * randreal1();
-}
 
-real SampleSize = 240.; // Size of the array of andom numbers 
-real Re20 = 0.2;              // Velocity for Re=20
-real Re4000 = 40.;              // Velocity for Re=4000
-
-
-real[int] velocitiesSample(SampleSize);
-
-
-for (j=0;j<nsnsh;j++){
-    for (i=0;i<225;i++){ // here starts the fixed-point iteration for the nonlinearity
+//for each sample
+for (j=0;j<SampleSize;j++){
+    for (i=0;i<55;i++){ // here starts the fixed-point iteration for the nonlinearity
         NSunst;
         up[]=u[];
+        vp[]=v[];
+        pp[]=p[];
 
 }
-    usnsh[j][]=u[];
     
-    plot([usnsh[j],vsnsh[j]], wait = 1, cmm="Reynolds="+Re);
+    // plot([u,v], wait = 1, cmm="Reynolds="+Re);
 
     {ofstream fout(PathToDirectory+"/u"+"/sample_"+j+"_u.txt");
-    fout << usnsh[j][] << endl;
+    fout << u[] << endl;
     }
 
     {ofstream fout(PathToDirectory+"/v"+"/sample_"+j+"_v.txt");
-    fout << vsnsh[j][] << endl;
+    fout << v[] << endl;
     }
 
     {ofstream fout(PathToDirectory+"/p"+"/sample_"+j+"_p.txt");
-    fout << psnsh[j][] << endl;
+    fout << p[] << endl;
     }
 
     cout << "Sample No."+ j+ " saved" << endl;
 
 
-    real randomnum = RNG(Re20, Re2200, SampleSize);
+    real randomnum = RNG(Re20, Re1200, SampleSize);
     velocitiesSample(j) = randomnum;
     uin = randomnum;
     Re = (1/nu)*randomnum*L;
-}
 
+}
 
 
 {ofstream fout(PathToDirectory+"/velocities"+"/velocities_sampled.txt");
   fout << velocitiesSample << endl;
 }
 cout << "Array of randomly sampled velocities is saved." << endl;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

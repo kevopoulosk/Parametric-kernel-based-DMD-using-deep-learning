@@ -7,7 +7,7 @@ real mu = 0.01; // dynamic viscosity of the fluid (TO BE VARIED)
 
 real nu = mu/rho;
 
-real uin = 50; // inflow velocity (u)
+real uin = 20; // inflow velocity (u)
 
 real Re=(1/nu)*uin*L;
 func fx = 0; // force per unit volume in x direction
@@ -23,7 +23,7 @@ int[int] orderOut = [1, 1, 1, 1];
 
 // Time-step and duration of the simulation 
 real dt = 0.01;
-real T = 5;
+real T = 10;
 
 //Define useful macros, in order to later define easier the NS equations. 
 macro div(u) (dx(u#x) + dy(u#y))//

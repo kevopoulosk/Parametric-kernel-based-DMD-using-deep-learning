@@ -2,6 +2,7 @@
 include "macro_ddm.idp"
 load "iovtk"
 
+string PathToDirectory = "/Users/konstantinoskevopoulos/Documents/TimeDependentNS/flow_around_cylinder/";
 
 // number of elements
 int n1 = 40; 
@@ -10,7 +11,7 @@ int n2 = 60;
 real mu = 0.001; // Dynamic viscosity of the fluid
 real rho = 1; // density of the fluid
 real dt = 0.01; // time-stepping of the simulation
-real T = 5; // total time of the simulation 
+real T = 10; // total time of the simulation 
 
 real uin = 1.5; //velocity 
 // kinematic viscosity
@@ -19,7 +20,7 @@ real nu = mu/rho;
 real Re = (1/nu)*uin*(0.1);
 
 // timestep to save the data 
-int saveEach = 0.5/dt;
+int saveEach = 0.05/dt;
 // this has to do with the vtk file
 int[int] orderOut = [1, 1, 1, 1];
 
@@ -98,9 +99,23 @@ for(int i = 0; i < T/dt; i++)
   NSrhs = navierstokes(0, UPh);
   ux[] = NS^-1 * NSrhs;
   plot([ux, uy], wait=0, cmm="Iter= "+i+ " Re=" +Re);
-  if (i % saveEach == 0)
+  if (i % saveEach == 0){
     savevtk("flow_around_cylinder.vtk", Mesh, ux, uy, p, dataname=" u v p", order=orderOut,
             append = i ? true : false);
+    {ofstream fout(PathToDirectory+"/u"+"/sample_t="+i+"_u.txt");
+    fout << ux[] << endl;
+    }
+
+    {ofstream fout(PathToDirectory+"/v"+"/sample_t="+i+"_v.txt");
+    fout << uy[] << endl;
+    }
+
+    {ofstream fout(PathToDirectory+"/p"+"/sample_t="+i+"_p.txt");
+    fout << p[] << endl;
+    }
+    cout << "Sample No."+ i+ " saved" << endl;
+  }
+    
 
 }
 plot([ux,uy], p, wait=1);
