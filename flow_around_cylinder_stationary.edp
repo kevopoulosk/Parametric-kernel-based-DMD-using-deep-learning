@@ -1,6 +1,12 @@
-real uin = 0.2; // initial velocity
-int n1 = 25; //number of elements  
-int n2=45;
+// load "iovtk"
+// include "macro_ddm.idp"
+
+real umax = 0.3; // initial maximum/centerline velocity
+real umean = umax*2/3; // mean velocity 
+
+//number of elements  
+int n1 = 50; 
+int n2 = 200;
 
 
 string PathToDirectory = "/Users/konstantinoskevopoulos/Documents/SnapshotData/flow_around_cylinder/";
@@ -34,22 +40,28 @@ cout << "Number of Elements: " + Th.nt << endl;
 
 
 
-real mu = 0.001;
-real rho = 1;
-real nu = mu/rho;
+real mu = 0.001; // dynamic viscosity
+real rho = 1; // fluid density 
+real nu = mu/rho; // kinematic viscosity
 
-real Re = (1/nu)*uin*0.1;
+real Re = umean*0.1*1/nu;
 
 
-real SampleSize = 240.; // Size of the array of andom numbers 
-real Re20 = 0.2;              // Velocity for Re=20
-real Re300 = 3;              // Velocity for Re=300
+real SampleSize = 600.; // Size of the array of andom numbers 
+real Re1 = 0.01;              // Mean velocity for Re=1
+real Re45 = 0.45;              // Mean velocity for Re=45
 real[int] velocitiesSample(SampleSize);
-
+// this has to do with the vtk file
+int[int] orderOut = [1, 1, 1, 1];
 // Function to generate random numbers within a given range
 func real RNG(real low, real high, int size) {
     return low + (high - low) * randreal1();
 }
+
+// Function to find the mean velocity of the parabolic profile, given the maximum/centerline velocity.
+// func real MaxToMean(real maxVelocity) {
+//     return maxVelocity*(2/3);
+// }
 
 int i,j;
 
@@ -71,7 +83,7 @@ int2d(Th)(nu*(grad(u)'*grad(uu)+grad(v)'*grad(vv)))
 -int2d(Th)(p*div(uu,vv)+pp*div(u,v))
 +int2d(Th)(1.e-10*p*pp)
 + on(Wall, u=0, v=0) // noslip conditions on the walls
-+ on(Inlet, u=(4*uin*y*(0.41-y))/0.41^2, v=0) // parabolic function for the flow at the inlet
++ on(Inlet, u=(4*umean*y*(0.41-y))/0.41^2, v=0) // parabolic function for the flow at the inlet
 + on(Outlet, p=0)
 + on(Cyl, u=0, v=0) // noslip Dirichlet BC on the cylinder
 ;
@@ -80,15 +92,17 @@ int2d(Th)(nu*(grad(u)'*grad(uu)+grad(v)'*grad(vv)))
 
 //for each sample
 for (j=0;j<SampleSize;j++){
-    for (i=0;i<125;i++){ // here starts the fixed-point iteration for the nonlinearity
+    for (i=0;i<70;i++){ // here starts the fixed-point iteration for the nonlinearity
         NSunst;
         up[]=u[];
         vp[]=v[];
         pp[]=p[];
 
 }
-    
-    // plot([u,v], wait = 1, cmm="Reynolds="+Re);
+    plot([u,v], wait = 1, cmm="Reynolds= "+Re+" sample "+j);
+    // if (j==0) {
+    //     savevtk("flow_around_cylinder_stationary.vtk", Th, u, v, p, dataname=" u v p", order=orderOut);
+    // }
 
     {ofstream fout(PathToDirectory+"/u"+"/sample_"+j+"_u.txt");
     fout << u[] << endl;
@@ -105,10 +119,11 @@ for (j=0;j<SampleSize;j++){
     cout << "Sample No."+ j+ " saved" << endl;
 
 
-    real randomnum = RNG(Re20, Re300, SampleSize);
+    real randomnum = RNG(Re1, Re45, SampleSize);
     velocitiesSample(j) = randomnum;
-    uin = randomnum;
-    Re = (1/nu)*uin*0.1;
+    umean = randomnum;
+    // real umean = MaxToMean(umax);
+    Re = umean*0.1*1/nu;
 
 }
 

@@ -1,5 +1,8 @@
-real uin = 1; // initial velocity
-int m = 30; //number of elements  
+// load "iovtk"
+// include "macro_ddm.idp"
+
+real uin = 4; // initial velocity
+int m = 75; //number of elements  
 real L = 1; // length of the square
 
 
@@ -21,12 +24,14 @@ real mu = 0.01;
 real rho = 1;
 real nu = mu/rho;
 
-real Re = (1/nu)*uin*L;
+real Re = uin*L*1/nu;
 
+// this has to do with the vtk file
+int[int] orderOut = [1, 1, 1, 1];
 
-real SampleSize = 240.; // Size of the array of andom numbers 
+real SampleSize = 600.; // Size of the array of andom numbers 
 real Re20 = 0.2;              // Velocity for Re=20
-real Re1200 = 12.;              // Velocity for Re=1000
+real Re1200 = 12.;              // Velocity for Re=1200
 real[int] velocitiesSample(SampleSize);
 
 // Function to generate random numbers within a given range
@@ -61,7 +66,7 @@ int2d(Th)(nu*(grad(u)'*grad(uu)+grad(v)'*grad(vv)))
 
 //for each sample
 for (j=0;j<SampleSize;j++){
-    for (i=0;i<55;i++){ // here starts the fixed-point iteration for the nonlinearity
+    for (i=0;i<70;i++){ // here starts the fixed-point iteration for the nonlinearity
         NSunst;
         up[]=u[];
         vp[]=v[];
@@ -69,7 +74,11 @@ for (j=0;j<SampleSize;j++){
 
 }
     
-    // plot([u,v], wait = 1, cmm="Reynolds="+Re);
+    plot([u,v], wait = 1, cmm="Reynolds="+Re);
+
+    // if (j==0) {
+    //     savevtk("lid_driven_cavity_stationary.vtk", Th, u, v, p, dataname=" u v p", order=orderOut);
+    // }
 
     {ofstream fout(PathToDirectory+"/u"+"/sample_"+j+"_u.txt");
     fout << u[] << endl;
@@ -89,7 +98,7 @@ for (j=0;j<SampleSize;j++){
     real randomnum = RNG(Re20, Re1200, SampleSize);
     velocitiesSample(j) = randomnum;
     uin = randomnum;
-    Re = (1/nu)*randomnum*L;
+    Re = randomnum*L*1/nu;
 
 }
 
