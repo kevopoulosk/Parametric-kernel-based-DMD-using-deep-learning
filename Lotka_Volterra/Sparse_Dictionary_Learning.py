@@ -21,7 +21,11 @@ def Permute(X):
     return Permuted_X, random_permutation
 
 
-def SparseDictionary(SnapMat, kernel, tolerance):
+def Scale(X):
+    return 1/np.max(np.abs(X), axis=1).reshape(-1, 1)
+
+
+def SparseDictionary(SnapMat, scale, kernel, tolerance, pbar_bool=True):
     """
     Function that generates the sparse dictionary
     :param SnapMat: The permuted snapshot matrix X
@@ -31,6 +35,7 @@ def SparseDictionary(SnapMat, kernel, tolerance):
     :return: The generated sparse dictionary "Xtilde".
     """
 
+    SnapMat = scale * SnapMat
     # initialise the sparse dictionary with the first sample of the randomly permuted matrix
     sparse_dict = SnapMat[:, 0].reshape(-1, 1)
 
@@ -39,7 +44,8 @@ def SparseDictionary(SnapMat, kernel, tolerance):
     C = np.sqrt(k_tt).reshape(-1, 1)
     m = 1  # needed for the Cholesky update
     # Iterate through the randomly permuted snapshot matrix, from the first column and on
-    pbar = tqdm(total=SnapMat.shape[1] - 1, desc="Progress of Sparse Dictionary Learning")
+    if pbar_bool:
+        pbar = tqdm(total=SnapMat.shape[1] - 1, desc="Progress of Sparse Dictionary Learning")
     m_vals = np.zeros(SnapMat.shape[1])
     delta_vals = np.zeros(SnapMat.shape[1])
     m_vals[0] = m
@@ -70,9 +76,11 @@ def SparseDictionary(SnapMat, kernel, tolerance):
 
             C = np.hstack([C, new_column_vals.reshape(-1, 1)])
             m += 1
-        pbar.update()
+        if pbar_bool:
+            pbar.update()
         m_vals[i] = m
-    pbar.close()
+    if pbar_bool:
+        pbar.close()
 
     return sparse_dict, m_vals, delta_vals
 
@@ -83,7 +91,6 @@ def quadratic_kernel(u, v, c=0.1, d=2, slope=1):
 
 def linear_kernel(u, v, c=0.1):
     return u.T @ v + c
-
 
 # parameters = [0.1, 0.002, 0.2, 0.0025]
 # tol = 1e-5
@@ -102,4 +109,3 @@ def linear_kernel(u, v, c=0.1):
 # plt.xlabel("Current sample t")
 # plt.ylabel(r"$\delta_t$")
 # plt.show()
-

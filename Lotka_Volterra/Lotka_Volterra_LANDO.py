@@ -1,7 +1,7 @@
 import numpy as np
 from Lotka_Volterra_model import Lotka_Volterra_Snapshot, Predict, Lotka_Volterra
 from Lotka_Volterra_Deriv import Lotka_Volterra_Deriv
-from Sparse_Dictionary_Learning import Permute, linear_kernel, quadratic_kernel, SparseDictionary
+from Sparse_Dictionary_Learning import Permute, linear_kernel, quadratic_kernel, SparseDictionary, Scale
 import matplotlib.pyplot as plt
 from scipy import integrate
 
@@ -13,22 +13,25 @@ IC = [80, 20]
 X, _ = Lotka_Volterra_Snapshot(params, T=100, dt=0.0002, x0=IC[0], y0=IC[1])
 Y = Lotka_Volterra_Deriv(X, *params)
 
+scaledX = Scale(X)
+
 # randomly permute X and Y, for more efficient dictionary learning
 Xperm, perm = Permute(X)
 Yperm = Y[:, perm]
 
+
 # Learn the Sparse Dictionary for both kernels
-Dict_linear, mVals_linear, deltaVals_linear = SparseDictionary(Xperm, kernel=linear_kernel, tolerance=1e-6)
-Dict_quad, mVals_quad, deltaVals_quad = SparseDictionary(Xperm, kernel=quadratic_kernel, tolerance=1e-6)
+Dict_linear, mVals_linear, deltaVals_linear = SparseDictionary(Xperm, scaledX, kernel=linear_kernel, tolerance=1e-6)
+Dict_quad, mVals_quad, deltaVals_quad = SparseDictionary(Xperm, scaledX, kernel=quadratic_kernel, tolerance=1e-6)
 
 
 # Compute W tilde for both kernels
-W_tilde_linear = Yperm @ np.linalg.pinv(quadratic_kernel(Dict_linear, Xperm))
-W_tilde_quad = Yperm @ np.linalg.pinv(quadratic_kernel(Dict_quad, Xperm))
+W_tilde_linear = Yperm @ np.linalg.pinv(quadratic_kernel(Dict_linear, scaledX*Xperm))
+W_tilde_quad = Yperm @ np.linalg.pinv(quadratic_kernel(Dict_quad, scaledX*Xperm))
 
 # Form the model
-Model_Linear = W_tilde_linear @ linear_kernel(Dict_linear, X)
-Model_Quad = W_tilde_quad @ quadratic_kernel(Dict_quad, X)
+Model_Linear = W_tilde_linear @ linear_kernel(Dict_linear, scaledX*X)
+Model_Quad = W_tilde_quad @ quadratic_kernel(Dict_quad, scaledX*X)
 
 recErr_linear = np.mean(np.linalg.norm(Y - Model_Linear) / np.linalg.norm(Y))
 print(f"The reconstruction error using linear kernel is {recErr_linear}")
@@ -39,7 +42,7 @@ print(f"The reconstruction error using quadratic kernel is {recErr_quad}")
 
 # Form the general model, using the quadratic kernel
 def Model_General(x, t):
-    return W_tilde_quad @ quadratic_kernel(Dict_quad, x)
+    return W_tilde_quad @ quadratic_kernel(Dict_quad, scaledX*x)
 
 
 time = np.linspace(0, 100, 500000)
@@ -79,7 +82,7 @@ IC_other = [35, 5]
 X_diff_IC, _ = Lotka_Volterra_Snapshot(params, T=100, dt=0.0002, x0=IC_other[0], y0=IC_other[1])
 Y_diff_IC = Lotka_Volterra_Deriv(X_diff_IC, *params)
 
-Y_pred = W_tilde_quad @ quadratic_kernel(Dict_quad, X_diff_IC)
+Y_pred = W_tilde_quad @ quadratic_kernel(Dict_quad, scaledX*X_diff_IC)
 
 time = np.linspace(0, 100, 500000)
 plt.figure(figsize=(10, 7))

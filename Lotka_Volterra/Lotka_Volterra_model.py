@@ -50,7 +50,7 @@ plt.grid(True)
 plt.show()
 
 
-def Lotka_Volterra_Snapshot(params, T=100, dt=0.0002, x0=80, y0=20):
+def Lotka_Volterra_Snapshot(params, T=600, dt=0.002, x0=80, y0=20):
     timesteps = int(T / dt)
     X = np.zeros((timesteps, 2))
 
@@ -69,4 +69,4 @@ def Predict(model, Tend, IC):
     t = np.linspace(0, Tend, 500000)
     sol = odeint(model, IC, t)
     print(f"The solution is {sol}")
-    return sol[0]
+    return sol
