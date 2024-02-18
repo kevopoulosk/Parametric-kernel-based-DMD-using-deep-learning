@@ -1,11 +1,11 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from numba import njit
-from scipy.integrate import odeint
+from scipy.integrate import odeint, solve_ivp
 
 
-@njit
-def Lotka_Volterra(alpha, beta, gamma, delta, T, dt, x0, y0):
+# @njit
+def Lotka_Volterra(alpha, beta, gamma, delta, T, x0, y0):
     """
     Function that numerically integrates the coupled ODEs that comprise the Lotka-Volterra model
     :param alpha: Average per capita birth rate of prey.
@@ -21,44 +21,58 @@ def Lotka_Volterra(alpha, beta, gamma, delta, T, dt, x0, y0):
     NOTE: We can also make that function work with a routine, i.e use the "odeint" routine to integrate teh ODEs
     """
 
-    timesteps = int(T / dt)
-    x = np.zeros(timesteps)
-    y = np.zeros(timesteps)
-    x[0] = x0
-    y[0] = y0
-    # Finite Differencing
-    for i in range(timesteps - 1):
-        x[i + 1] = x[i] + dt * (alpha * x[i] - beta * x[i] * y[i])
-        y[i + 1] = y[i] + dt * (delta * x[i] * y[i] - gamma * y[i])
+    # timesteps = int(T / dt)
+    # x = np.zeros(timesteps)
+    # y = np.zeros(timesteps)
+    # x[0] = x0
+    # y[0] = y0
+    # # Finite Differencing
+    # for i in range(timesteps - 1):
+    #     x[i + 1] = x[i] + dt * (alpha * x[i] - beta * x[i] * y[i])
+    #     y[i + 1] = y[i] + dt * (delta * x[i] * y[i] - gamma * y[i])
 
-    return x, y
+    def Lotka_Volterra(t, y, alpha, beta, gamma, delta):
+        x0, x1 = y
 
+        dx0_dt = alpha * x0 - beta * x0 * x1
+        dx1_dt = -gamma * x1 + delta * x0 * x1
 
-# Example of the numerically integrated ODE
-alpha, beta, gamma, delta = 0.1, 0.002, 0.2, 0.0025
-x, y = Lotka_Volterra(alpha=alpha, beta=beta, gamma=gamma, delta=delta, T=100, dt=0.0002, x0=80, y0=20)
+        return [dx0_dt, dx1_dt]
 
-time = np.linspace(0, 100, int(100 / 0.0002))
-plt.figure(figsize=(10, 7))
-plt.title("The Lotka-Volterra system")
-plt.plot(time, x, label='prey')
-plt.plot(time, y, label='predator', linestyle='--')
-plt.legend(loc='best')
-plt.xlabel(r"$t$")
-plt.ylabel('Population')
-plt.grid(True)
-plt.show()
+    sol = solve_ivp(Lotka_Volterra, t_span=[0, T], y0=[x0, y0], method="RK45",
+                    t_eval=np.linspace(0, T, num=300), args=(alpha, beta, gamma, delta))
+
+    x0 = sol.y[0]
+    x1 = sol.y[1]
+
+    return x0, x1
 
 
-def Lotka_Volterra_Snapshot(params, T=600, dt=0.002, x0=80, y0=20):
-    timesteps = int(T / dt)
-    X = np.zeros((timesteps, 2))
+# # Example of the numerically integrated ODE
+# alpha, beta, gamma, delta = 0.1, 0.002, 0.2, 0.0025
+# x, y = Lotka_Volterra(alpha=alpha, beta=beta, gamma=gamma, delta=delta, T=100, x0=80, y0=20)
+#
+# time = np.linspace(0, 100, 300)
+# plt.figure(figsize=(10, 7))
+# plt.title("The Lotka-Volterra system")
+# plt.plot(time, x, label='prey')
+# plt.plot(time, y, label='predator', linestyle='--')
+# plt.legend(loc='best')
+# plt.xlabel(r"$t$")
+# plt.ylabel('Population')
+# plt.grid(True)
+# plt.show()
+
+
+def Lotka_Volterra_Snapshot(params, T=400, dt=0.002, x0=80, y0=20):
+
+    X = np.zeros((300, 2))
 
     parameter_samples = []
     parameter_samples.append(params)
     alpha, beta, gamma, delta = params
 
-    x, y = Lotka_Volterra(alpha, beta, gamma, delta, T=T, dt=dt, x0=x0, y0=y0)
+    x, y = Lotka_Volterra(alpha, beta, gamma, delta, T=T, x0=x0, y0=y0)
     X[:, 0] = x
     X[:, 1] = y
 

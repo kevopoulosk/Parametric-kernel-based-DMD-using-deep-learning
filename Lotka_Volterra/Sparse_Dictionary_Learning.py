@@ -31,6 +31,7 @@ def SparseDictionary(SnapMat, scale, kernel, tolerance, pbar_bool=True):
     :param SnapMat: The permuted snapshot matrix X
     :param kernel: The kernel function used. Could be linear, quadratic, RBF etc.
     :param tolerance: The sparsity parameter. Increase this value for a more sparse dictionary and vice versa
+    :param pbar_bool: Whether or not to print a progress bar.
 
     :return: The generated sparse dictionary "Xtilde".
     """
@@ -45,7 +46,7 @@ def SparseDictionary(SnapMat, scale, kernel, tolerance, pbar_bool=True):
     m = 1  # needed for the Cholesky update
     # Iterate through the randomly permuted snapshot matrix, from the first column and on
     if pbar_bool:
-        pbar = tqdm(total=SnapMat.shape[1] - 1, desc="Progress of Sparse Dictionary Learning")
+        pbar = tqdm(total=SnapMat.shape[1] - 1, desc=f"Progress of Sparse Dictionary Learning with {kernel.__name__}")
     m_vals = np.zeros(SnapMat.shape[1])
     delta_vals = np.zeros(SnapMat.shape[1])
     m_vals[0] = m
@@ -82,7 +83,7 @@ def SparseDictionary(SnapMat, scale, kernel, tolerance, pbar_bool=True):
     if pbar_bool:
         pbar.close()
 
-    return sparse_dict, m_vals, delta_vals
+    return sparse_dict, SnapMat, C
 
 
 def quadratic_kernel(u, v, c=0.1, d=2, slope=1):
@@ -91,6 +92,24 @@ def quadratic_kernel(u, v, c=0.1, d=2, slope=1):
 
 def linear_kernel(u, v, c=0.1):
     return u.T @ v + c
+
+
+def gauss_kernel(X1, X2, Sigma=1.1):
+    dim1 = X1.shape[1]
+    dim2 = X2.shape[1]
+
+    norms1 = np.sum(X1**2, axis=0)
+    norms2 = np.sum(X2**2, axis=0)
+
+    mat1 = np.tile(norms1, (dim2, 1)).T
+    mat2 = np.tile(norms2, (dim1, 1))
+
+    distmat = mat1 + mat2 - 2 * X1.T @ X2  # full distance matrix
+    K = np.exp(-distmat / (2 * Sigma**2))
+
+    return K
+
+
 
 # parameters = [0.1, 0.002, 0.2, 0.0025]
 # tol = 1e-5
