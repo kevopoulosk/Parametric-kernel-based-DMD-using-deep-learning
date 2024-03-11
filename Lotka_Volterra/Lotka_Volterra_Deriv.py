@@ -5,6 +5,7 @@ def Lotka_Volterra_Deriv(X, alpha, beta, gamma, delta):
     """
     Function that generates the "Y" snapshot matrix, needed for the kernel-DMD.
     Note that Y = F(x) = dx/dt
+    So, essentially this function evaluates the right-hand side of the Lotka-Volterra ODEs
     :param X: The state of the system.
     :param alpha: Average per capita birth rate of prey.
     :param beta: Fraction of prey caught per predator per unit time

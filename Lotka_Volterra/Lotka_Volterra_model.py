@@ -5,7 +5,7 @@ from scipy.integrate import odeint, solve_ivp
 
 
 # @njit
-def Lotka_Volterra(alpha, beta, gamma, delta, T, x0, y0):
+def Lotka_Volterra(alpha, beta, gamma, delta, T, x0, y0, num_sensors):
     """
     Function that numerically integrates the coupled ODEs that comprise the Lotka-Volterra model
     :param alpha: Average per capita birth rate of prey.
@@ -40,7 +40,7 @@ def Lotka_Volterra(alpha, beta, gamma, delta, T, x0, y0):
         return [dx0_dt, dx1_dt]
 
     sol = solve_ivp(Lotka_Volterra, t_span=[0, T], y0=[x0, y0], method="RK45",
-                    t_eval=np.linspace(0, T, num=300), args=(alpha, beta, gamma, delta))
+                    t_eval=np.linspace(0, T, num=num_sensors), args=(alpha, beta, gamma, delta))
 
     x0 = sol.y[0]
     x1 = sol.y[1]
@@ -64,15 +64,15 @@ def Lotka_Volterra(alpha, beta, gamma, delta, T, x0, y0):
 # plt.show()
 
 
-def Lotka_Volterra_Snapshot(params, T=400, dt=0.002, x0=80, y0=20):
+def Lotka_Volterra_Snapshot(params, T=400, x0=80, y0=20, num_sensors=300):
 
-    X = np.zeros((300, 2))
+    X = np.zeros((num_sensors, 2))
 
     parameter_samples = []
     parameter_samples.append(params)
     alpha, beta, gamma, delta = params
 
-    x, y = Lotka_Volterra(alpha, beta, gamma, delta, T=T, x0=x0, y0=y0)
+    x, y = Lotka_Volterra(alpha, beta, gamma, delta, T=T, x0=x0, y0=y0, num_sensors=num_sensors)
     X[:, 0] = x
     X[:, 1] = y
 
@@ -80,7 +80,8 @@ def Lotka_Volterra_Snapshot(params, T=400, dt=0.002, x0=80, y0=20):
 
 
 def Predict(model, Tend, IC):
-    t = np.linspace(0, Tend, 500000)
-    sol = odeint(model, IC, t)
-    print(f"The solution is {sol}")
-    return sol
+    t = np.linspace(0, Tend, 300)
+    sol = solve_ivp(model, [0, Tend], IC, t_eval=t)
+    print(f"The solution is {sol.y}")
+    return sol.y
+

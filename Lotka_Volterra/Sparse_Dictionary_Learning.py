@@ -35,11 +35,11 @@ def SparseDictionary(SnapMat, scale, kernel, tolerance, pbar_bool=True):
 
     :return: The generated sparse dictionary "Xtilde".
     """
-
+    idx = []
     SnapMat = scale * SnapMat
     # initialise the sparse dictionary with the first sample of the randomly permuted matrix
     sparse_dict = SnapMat[:, 0].reshape(-1, 1)
-
+    idx.append(0)
     # initialise the Cholesky factor of K_Tilde
     k_tt = kernel(SnapMat[:, 0].reshape(-1, 1), SnapMat[:, 0].reshape(-1, 1))
     C = np.sqrt(k_tt).reshape(-1, 1)
@@ -63,6 +63,7 @@ def SparseDictionary(SnapMat, scale, kernel, tolerance, pbar_bool=True):
 
         if np.abs(delta) > tolerance:
             # Update the dictionary
+            idx.append(i)
             sparse_dict = np.concatenate((sparse_dict, CandidateSample), axis=1)
 
             st = np.linalg.solve(C, k_tilde_prev)
@@ -83,7 +84,7 @@ def SparseDictionary(SnapMat, scale, kernel, tolerance, pbar_bool=True):
     if pbar_bool:
         pbar.close()
 
-    return sparse_dict, SnapMat, C
+    return sparse_dict, SnapMat, C, idx
 
 
 def quadratic_kernel(u, v, c=0.1, d=2, slope=1):
