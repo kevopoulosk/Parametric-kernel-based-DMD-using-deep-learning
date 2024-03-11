@@ -365,7 +365,7 @@ T_test = int(1.5 * T_train)
 train_frac = 0.6
 depth = 5
 width = 1500
-epochs = 25000
+epochs = 27000
 
 # Perform the whole procedure of the parametric LANDO. First we perform the offline phase of the algorithm
 # and subsequently, the online phase is performed
