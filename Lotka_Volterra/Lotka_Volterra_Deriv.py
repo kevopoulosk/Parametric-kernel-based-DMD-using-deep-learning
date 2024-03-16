@@ -18,8 +18,8 @@ def Lotka_Volterra_Deriv(X, alpha, beta, gamma, delta):
     dxdt = np.zeros(X.shape[1])
     dydt = np.zeros(X.shape[1])
     for col in range(X.shape[1]):
-        dxdt[col] = alpha * X[0, col] + beta * X[0, col] * X[1, col]
-        dydt[col] = delta * X[0, col] * X[1, col] + gamma * X[1, col]
+        dxdt[col] = alpha * X[0, col] - beta * X[0, col] * X[1, col]
+        dydt[col] = delta * X[0, col] * X[1, col] - gamma * X[1, col]
 
     X_dot = np.vstack((dxdt, dydt))
 
