@@ -1,4 +1,9 @@
+import numpy as np
+import matplotlib.pyplot as plt
 from scipy.stats import qmc
+from tqdm import tqdm
+from Lotka_Volterra_Deriv import *
+from Lotka_Volterra_model import *
 from Sparse_Dictionary_Learning import *
 from torch.utils.data import DataLoader
 from sklearn import preprocessing
@@ -31,12 +36,12 @@ class FNN(nn.Module):
         layers = []
         # Start with the input layer
         layers.append(nn.Linear(in_features=self.NumInput, out_features=self.Width))
-        layers.append(nn.ReLU())
+        layers.append(nn.Tanh())
 
         for i in range(self.Depth):
             # Add hidden layers
             layers.append(nn.Linear(in_features=self.Width, out_features=self.Width))
-            layers.append(nn.ReLU())
+            layers.append(nn.Tanh())
 
         # output layer
         layers.append(nn.Linear(in_features=self.Width, out_features=self.NumOutput))
@@ -44,12 +49,12 @@ class FNN(nn.Module):
 
         self.fnn_stack = nn.Sequential(*layers)
         # Add bias to enhance performance in unseen parameters
-        self.b = torch.nn.parameter.Parameter(torch.zeros(self.NumOutput))
+        # self.b = torch.nn.parameter.Parameter(torch.zeros(self.NumOutput))
 
     def forward(self, x):
         fnn_output = self.fnn_stack(x)
 
-        fnn_output += self.b
+        # fnn_output += self.b
 
         return fnn_output
 
@@ -126,7 +131,6 @@ class ParametricLANDO:
 
         self.param_samples = np.concatenate((param_samples_lh, self.params_not_varied), axis=1)
 
-        self.scaler = preprocessing.MaxAbsScaler()
 
         self.SparseDicts_all = []
         self.scaled_X_all = []
@@ -170,10 +174,10 @@ class ParametricLANDO:
         models = [W_tilde_mat @ kernel_mat for W_tilde_mat, kernel_mat in zip(self.W_tildes, kernels)]
 
         # sanity check -> compute reconstruction error to make sure it is small
-        reconstruction_relative_errors = [abs(Y_vals[i][0] - models[i][0]) / Y_vals[i][0] for i in range(len(Y_vals))]
-        mean_reconstruction_relative_errors = [np.mean(list_err) for list_err in reconstruction_relative_errors]
+        reconstruction_relative_errors = [np.linalg.norm(Y_vals[i][0] - models[i][0]) / np.linalg.norm(Y_vals[i][0])
+                                          for i in range(len(Y_vals))]
 
-        print(f"Training Data: The mean relative reconstruction errors are: {mean_reconstruction_relative_errors}")
+        print(f"Training Data: The mean relative reconstruction errors are: {reconstruction_relative_errors}")
 
         return self.W_tildes, self.SparseDicts_all, self.param_samples
 
@@ -205,35 +209,38 @@ class ParametricLANDO:
         true_dynamics = []
         pbar = tqdm(total=self.num_samples, desc=f"Online Phase -> Prediction of f(x, t*; mu)...")
         for i, sample in enumerate(self.param_samples):
+            ### This is to compare with the predicted value
             X, _ = Lotka_Volterra_Snapshot(params=sample, T=T_end_test, num_sensors=self.num_sensors)
-            Y = Lotka_Volterra_Deriv(X, *sample)
+            true_dynamics.append(X)
 
-            f_mu = self.W_tildes[i] @ quadratic_kernel(self.SparseDicts_all[i], self.scaled_X_all[i] * X)
+            def Model_General(t, z):
+                x0, x1 = z
+                x = np.array([[x0], [x1]])
+                return (self.W_tildes[i] @ self.kernel(self.SparseDicts_all[i], self.scaled_X_all[i] * x)).flatten()
 
-            lando_dynamics.append(f_mu)
-            true_dynamics.append(Y)
+            x_pred = Predict(model=Model_General, Tend=T_end_test, IC=[80, 20], sensors=self.num_sensors) ### TODO: Change the IC here
+            lando_dynamics.append(x_pred)
+
             pbar.update()
         pbar.close()
 
         # sanity check -> compute reconstruction error to make sure it is small
-        reconstruction_relative_errors = [abs(true_dynamics[i][0] - lando_dynamics[i][0]) / true_dynamics[i][0]
+        reconstruction_relative_errors = [np.linalg.norm(true_dynamics[i][0] - lando_dynamics[i][0]) / np.linalg.norm(true_dynamics[i][0])
                                           for i in range(len(true_dynamics))]
 
-        mean_reconstruction_relative_errors = [np.mean(list_err) for list_err in reconstruction_relative_errors]
-        print(f"The mean relative reconstruction errors are: {mean_reconstruction_relative_errors}")
+        print(f"The mean relative reconstruction errors are: {reconstruction_relative_errors}")
 
         # Now, for each parameter value in the test set, compute the true dynamics for comparison
         true_dynamics_test = []
         for val, sample_test in enumerate(param_samples_test):
             X, _ = Lotka_Volterra_Snapshot(params=sample_test, T=T_end_test, num_sensors=self.num_sensors)
-            Y = Lotka_Volterra_Deriv(X, *sample_test)
-            true_dynamics_test.append(Y)
+            true_dynamics_test.append(X[:, -1])
 
         # Set up the neural network to learn the mapping
-        Mapping_FNN = FNN(num_input=self.param_samples.shape[1],
-                          num_output=2 * self.num_sensors, depth=fnn_depth, width=fnn_width)
+        Mapping_FNN = FNN(num_input=1,
+                          num_output=X.shape[0], depth=fnn_depth, width=fnn_width)
 
-        optimizer = torch.optim.Adam(Mapping_FNN.parameters(), lr=1e-5)
+        optimizer = torch.optim.LBFGS(Mapping_FNN.parameters(), lr=1e-3)
         loss_criterion = torch.nn.MSELoss()
 
         # Split the param_samples matrix into training and validation data
@@ -246,17 +253,14 @@ class ParametricLANDO:
         # These are fed to the Dataloader, and then to the NN for the training
         # Note that now we scale the parameters to the range (0, 1).
         # Hopefully, this will enhance the performance of the NN interpolator
-        X_train = self.scaler.fit_transform(self.param_samples[:TrainSamples, :])
-        y_train = lando_dynamics[:TrainSamples]
-        y_train = np.vstack([y_train[val].flatten() for val in range(len(y_train))])
+        X_train = self.param_samples[:TrainSamples, 0].reshape(-1, 1)
+        y_train = np.vstack([lando_dynamics[:TrainSamples][i][:, -1] for i in range(TrainSamples)])
 
-        X_valid = self.scaler.fit_transform(self.param_samples[TrainSamples:, :])
-        y_valid = lando_dynamics[TrainSamples:]
-        y_valid = np.vstack([y_valid[val_].flatten() for val_ in range(len(y_valid))])
+        X_valid = self.param_samples[TrainSamples:, 0].reshape(-1, 1)
+        y_valid = np.vstack([lando_dynamics[TrainSamples:][i][:, -1] for i in range(ValidSamples)])
 
-        X_test = self.scaler.fit_transform(param_samples_test)
-        y_test = true_dynamics_test
-        y_test = np.vstack([y_test[val__].flatten() for val__ in range(len(y_test))])
+        X_test = param_samples_test[:, 0].reshape(-1, 1)
+        y_test = np.vstack([true_dynamics_test[i] for i in range(TestSamples)])
 
         # Construct the datasets
         dataset_train = Data(X=X_train, y=y_train)
@@ -276,23 +280,33 @@ class ParametricLANDO:
         best_val_loss = float('inf')
         best_model_weights = None
 
+
+
         for epoch in range(epochs):
             # Training Phase
             Mapping_FNN.train(True)
             relative_error_train = []
             relative_error_valid = []
             for x, y in train_loader:
-                y_pred = Mapping_FNN(x)
-                loss = loss_criterion(y_pred, y)
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                # compute the mean relative error of the batch
-                relative_error_train.append(torch.mean(abs(y - y_pred) / y).detach().numpy())
 
+                def closure():
+                    if torch.is_grad_enabled():
+                        optimizer.zero_grad()
+                    y_pred = Mapping_FNN(x)
+                    loss = loss_criterion(y_pred, y)
+                    if loss.requires_grad:
+                        loss.backward()
+                    return loss
+
+                optimizer.step(closure=closure)
+
+                # _, y_pred = closure()
+                # compute the mean relative error of the batch
+                # relative_error_train.append(torch.mean(abs(y - y_pred) / abs(y)).detach().numpy())
+            print(closure().item())
             # compute the relative error of the epoch
-            loss_epoch = np.mean(relative_error_train)
-            loss_epochs.append(loss_epoch)
+            # loss_epoch = np.mean(relative_error_train)
+            # loss_epochs.append(loss_epoch)
 
             # Validation Phase
             Mapping_FNN.eval()
@@ -320,8 +334,11 @@ class ParametricLANDO:
             #     scheduler.step(mean_relative_err_val)
 
             print(f"Epoch   Training   Validation\n"
-                  f"{epoch}   {loss_epoch}   {mean_relative_err_val}\n"
+                  f"{epoch}  {mean_relative_err_val}\n"
                   f"====================================================")
+            # print(f"Epoch   Training   Validation\n"
+            #       f"{epoch}   {loss_epoch}   {mean_relative_err_val}\n"
+            #       f"====================================================")
 
             pbar.update()
         pbar.close()
@@ -352,20 +369,20 @@ class ParametricLANDO:
                 test_error.append(error_batch_test.detach().numpy())
         print(f"The mean test error is {np.mean(test_error)} based on {TestSamples} test samples")
 
-        return predicted_dynamics, true_dynamics_test, test_error
+        return predicted_dynamics, true_dynamics_test, test_error, param_samples_test
 
 
 T_train = 400
-NumSamples_Train = 5000
+NumSamples_Train = 1300
 sensors = 600
 sparsity_lando = 1e-6
 
-NumSamples_Test = 10000
+NumSamples_Test = 2000
 T_test = int(1.5 * T_train)
-train_frac = 0.6
-depth = 5
-width = 1500
-epochs = 27000
+train_frac = 0.7
+depth = 1
+width = 20
+epochs = 60000
 
 # Perform the whole procedure of the parametric LANDO. First we perform the offline phase of the algorithm
 # and subsequently, the online phase is performed
@@ -375,44 +392,40 @@ parametric_lando = ParametricLANDO(kernel=quadratic_kernel, horizon_train=T_trai
 
 w_tildes, sparse_dicts, mu_samples_train = parametric_lando.OfflinePhase()
 
-fx_pred, fx_true, error_test = parametric_lando.OnlinePhase(num_samples_test=NumSamples_Test, T_end_test=T_test,
-                                                            fraction_train=train_frac, fnn_depth=depth, fnn_width=width,
-                                                            epochs=epochs)
+fx_pred, fx_true, error_test, param_samples_test = parametric_lando.OnlinePhase(num_samples_test=NumSamples_Test,
+                                                                                T_end_test=T_test,
+                                                                                fraction_train=train_frac,
+                                                                                fnn_depth=depth, fnn_width=width,
+                                                                                epochs=epochs)
 
 print(f"fx_pred has shape {fx_pred[0].shape}")
 
 # Plot the predicted f(x) vs ground truth dxdt
 t = np.linspace(0, T_test, sensors)
 plt.style.use('_mpl-gallery')
+
+plt.figure(figsize=(9, 6))
 for i in range(len(fx_pred)):
-    # Create subplots
-    fig, axs = plt.subplots(2, 1, figsize=(9, 6))
+    relative_error = np.linalg.norm(fx_true[i]- fx_pred[i].detach().numpy())/np.linalg.norm(fx_true[i])
+    if relative_error > np.mean(error_test): # if the prediction error is worse than the mean error
+        plt.scatter(param_samples_test[i, 0], param_samples_test[i, 1], color='red', label='Not accurate')
+    else:
+        plt.scatter(param_samples_test[i, 0], param_samples_test[i, 1],  color='green', label='Good prediction')
+    plt.ylabel(r'$\mu_2$')
+    plt.xlabel(r'$\mu_1$')
+    plt.title("Exploration of the parameter space")
+plt.show()
 
-    # Plot the first subplot
-    axs[0].plot(t, fx_true[i][0, :], color='blue', label='Prey True')
-    axs[0].plot(t, fx_pred[i][:sensors], linestyle='dotted', color='red', label="Prey Pred.")
-    axs[0].axvline(x=400, linestyle='--')
-    axs[0].legend()
-    axs[0].set_title(
-        f'Prediction relative error = {np.mean(abs(fx_true[i][0, :] - fx_pred[i][:sensors].detach().numpy()) / fx_true[i][0, :])} ')
-    axs[0].set_xlabel(r"$t$")
-    axs[0].set_ylabel("f(x) - Population")
 
-    # Plot the second subplot
-    axs[1].plot(t, fx_true[i][1, :], color='blue', label='Predator True')
-    axs[1].plot(t, fx_pred[i][sensors:], linestyle='dotted', color='black', label="Predator Pred.")
-    axs[1].axvline(x=400, linestyle='--')
-    axs[1].legend()
-    axs[1].set_title(
-        f'Prediction relative error = {np.mean(abs(fx_true[i][1, :] - fx_pred[i][sensors:].detach().numpy()) / fx_true[i][1, :])} ')
-    axs[1].set_xlabel(r"$t$")
-    axs[1].set_ylabel("f(x) - Population")
-    plt.tight_layout()
+for i in range(len(fx_pred)):
+    plt.plot(fx_pred[i], '-o', color='green', label="Prediction")
+    plt.plot(fx_true[i], '-o', color='red', label="Ground Truth")
+    plt.xlabel(r"$t_*$")
+    plt.ylabel(r"$x^{\mu_i}_{t_*}$")
+    plt.title(f"Relative L2 error: {np.linalg.norm(fx_true[i]- fx_pred[i].detach().numpy())/np.linalg.norm(fx_true[i])}")
+    plt.legend()
     plt.show()
 
-# Notes: 1) Currently this is not point prediction, because the model is low-dimensional we can predict the whole f(x)
-#  2) For the same reason, the step of dimension reduction to the degrees of freedom with POD is not implemented yet
-#  Remember that this approach holds only for low-dim dynamical systems.
-#  For high-dim systems the POD method should also be implemented for dimensionality reduction (or autoencoder)
-# ALso, for high-dim systems we can have only the point prediction
+
+
 
