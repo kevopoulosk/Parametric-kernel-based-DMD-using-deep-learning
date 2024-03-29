@@ -1,7 +1,7 @@
 import numpy as np
-from Lotka_Volterra_model import Lotka_Volterra_Snapshot, Predict, Lotka_Volterra
+from Lotka_Volterra_model import Lotka_Volterra_Snapshot, Lotka_Volterra
 from Lotka_Volterra_Deriv import Lotka_Volterra_Deriv
-from Sparse_Dictionary_Learning import Permute, linear_kernel, quadratic_kernel, SparseDictionary, Scale, gauss_kernel
+from Sparse_Dictionary_Learning import Permute, linear_kernel, quadratic_kernel, SparseDictionary, Scale, gauss_kernel, Predict
 import matplotlib.pyplot as plt
 from scipy import integrate
 
@@ -12,6 +12,8 @@ IC = [80, 20]
 # Calculate the snapshot matrix "X", and the derivative matrix "Y"
 X, _ = Lotka_Volterra_Snapshot(params, T=100, x0=IC[0], y0=IC[1])
 Y = Lotka_Volterra_Deriv(X, *params)
+
+X_comp, _ = Lotka_Volterra_Snapshot(params, T=300, x0=IC[0], y0=IC[1])
 
 scaledX = Scale(X)
 
@@ -79,10 +81,13 @@ plt.show()
 # Potentially, I handle the odeint routine wrong.
 t = np.linspace(0, 300, 300)
 # Prediction using the quadratic kernel
-Pred_Reconstruction = Predict(model=Model_General, Tend=200, IC=IC)
+Pred_Reconstruction = Predict(model=Model_General, Tend=300, IC=IC, type="Cont")
 plt.title("Numerically integrate the constructed model/ Reconstruction")
-plt.plot(t, Pred_Reconstruction[0, :], label='x0')
-plt.plot(t, Pred_Reconstruction[1, :], label='x1')
+plt.plot(t, Pred_Reconstruction[0, :], label='x0 pred')
+plt.plot(t, X_comp[0, :], '--', color='black', label="x0 true")
+plt.plot(t, Pred_Reconstruction[1, :], label='x1 pred')
+plt.plot(t, X_comp[1, :], '--', color='black', label="x0 true")
+
 plt.legend(loc='best')
 plt.xlabel(r"$t$")
 plt.ylabel('Population')
