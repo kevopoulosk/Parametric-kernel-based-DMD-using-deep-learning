@@ -79,9 +79,6 @@ def Lotka_Volterra_Snapshot(params, T=400, x0=80, y0=20, num_sensors=300):
     return X.T, parameter_samples
 
 
-def Predict(model, Tend, IC, sensors):
-    t = np.linspace(0, Tend, sensors)
-    sol = solve_ivp(model, [0, Tend], IC, t_eval=t)
-    return sol.y
+
 
 
