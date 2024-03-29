@@ -1,9 +1,7 @@
-from Lotka_Volterra_model import Lotka_Volterra_Snapshot
-import numpy as np
 from numba import njit
 from tqdm import tqdm
-import matplotlib.pyplot as plt
-from Lotka_Volterra_Deriv import *
+from Lotka_Volterra.Lotka_Volterra_Deriv import *
+from scipy.integrate import solve_ivp
 
 
 @njit
@@ -95,7 +93,7 @@ def linear_kernel(u, v, c=0.1):
     return u.T @ v + c
 
 
-def gauss_kernel(X1, X2, Sigma=1.1):
+def gauss_kernel(X1, X2, Sigma=0.01):
     dim1 = X1.shape[1]
     dim2 = X2.shape[1]
 
@@ -110,6 +108,42 @@ def gauss_kernel(X1, X2, Sigma=1.1):
 
     return K
 
+
+def Predict(model, Tend, IC, dt=None, comp=None, sensors=300, type="Cont"):
+    """
+    Function to go from the derivative f(x) to the state of the system x
+    :param model: model to be integrated
+    :param Tend: time horizon of the integration
+    :param IC: initial condition
+    :param dt: integration step
+    :param comp: true x for comparison
+    :param sensors: number of discretised values (for the continuous case)
+    :param type: Whether the integration will be continuous or discrete
+    :return:
+    """
+    if type == "Cont":
+        t = np.linspace(0, Tend, sensors)
+        sol = solve_ivp(model, [0, Tend], IC, t_eval=t)
+        return sol.y
+    else:
+        dof = IC.shape[0]
+        m_timesteps = int(Tend / dt)
+
+        out_mat = np.zeros((dof, m_timesteps))
+        out_mat[:, 0] = IC
+        error = []
+
+        ### Uncomment for visualisation of the prediction error: x_true - x_predicted by LANDO
+
+        # plt.figure()
+        for t in range(1, m_timesteps):
+            out_mat[:, t] = model(out_mat[:, t-1].reshape(-1, 1)).reshape(-1)
+            # print(f"error is {np.linalg.norm(comp[:, t] - out_mat[:, t])/ np.linalg.norm(comp[:, t])}, step =  {t}")
+        #     error.append(np.linalg.norm(comp[:, t] - out_mat[:, t])/ np.linalg.norm(comp[:, t]))
+        # plt.semilogy(error)
+        # plt.show()
+
+        return out_mat
 
 
 # parameters = [0.1, 0.002, 0.2, 0.0025]
