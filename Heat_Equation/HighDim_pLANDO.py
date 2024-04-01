@@ -462,7 +462,7 @@ parametric_lando = ParametricLANDO(kernel=gauss_kernel, horizon_train=2.2, dt=0.
                                                             "/SnapshotData_Processed",
                                    directory_samples="/Users/konstantinoskevopoulos/Documents/Heat_Eq_Thesis"
                                                      "/Parameter_Samples",
-                                   scale_data_fnn=False, train_frac=0.05)
+                                   scale_data_fnn=False, train_frac=0.75)
 
 meanerr = parametric_lando.OfflinePhase()
 print(f"The mean error of reconstruction over all the samples is {meanerr}")
