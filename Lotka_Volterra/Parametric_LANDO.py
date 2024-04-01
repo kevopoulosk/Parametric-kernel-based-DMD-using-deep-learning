@@ -1,8 +1,5 @@
-import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import qmc
-from tqdm import tqdm
-from Lotka_Volterra_Deriv import *
 from Lotka_Volterra_model import *
 from Sparse_Dictionary_Learning import *
 from torch.utils.data import DataLoader
@@ -10,6 +7,19 @@ from sklearn import preprocessing
 import torch.utils.data as data
 import torch
 from torch import nn
+
+
+class Snake(nn.Module):
+    def __init__(self, alpha=0.5):
+        """
+        Implementation of the snake activation function for the NN
+        :param alpha: The assumed frequency of the data passed to NN.
+        """
+        super(Snake, self).__init__()
+        self.alpha = alpha
+
+    def forward(self, x):
+        return x + (1 / self.alpha) * torch.sin(self.alpha * x) ** 2
 
 
 class FNN(nn.Module):
@@ -24,37 +34,29 @@ class FNN(nn.Module):
         :param width: number of nodes in each layer
         """
         super().__init__()
-        # Number of hidden layers of the network
+
         self.Depth = depth
-        # Number of nodes in each hidden layer
         self.Width = width
-        # Number of input nodes for the network
         self.NumInput = num_input
-        # Number of output nodes for the network
         self.NumOutput = num_output
 
         layers = []
-        # Start with the input layer
+
         layers.append(nn.Linear(in_features=self.NumInput, out_features=self.Width))
-        layers.append(nn.Tanh())
+        layers.append(Snake())
 
         for i in range(self.Depth):
-            # Add hidden layers
             layers.append(nn.Linear(in_features=self.Width, out_features=self.Width))
-            layers.append(nn.Tanh())
+            layers.append(Snake())
 
-        # output layer
         layers.append(nn.Linear(in_features=self.Width, out_features=self.NumOutput))
-        # not relu activation in the output
 
         self.fnn_stack = nn.Sequential(*layers)
-        # Add bias to enhance performance in unseen parameters
-        # self.b = torch.nn.parameter.Parameter(torch.zeros(self.NumOutput))
+        self.b = torch.nn.parameter.Parameter(torch.zeros(self.NumOutput))
 
     def forward(self, x):
         fnn_output = self.fnn_stack(x)
-
-        # fnn_output += self.b
+        fnn_output += self.b
 
         return fnn_output
 
@@ -65,19 +67,17 @@ class Data(data.Dataset):
         """
         Class that preprocesses the data that go into the FNN architecture.
         This class is needed for the Dataloader.
-        :param X: Inputs of the neural network (e.g. the parameters "mu")
-        :param y: Outputs of the neural network (e.g. x or f(x) for a specific timestep t*)
+        :param X: Inputs of the neural network (the parameters "mu")
+        :param y: Outputs of the neural network (x for a specific timestep t*)
         """
 
         self.X = torch.tensor(X, dtype=torch.float32)
         self.y = torch.tensor(y, dtype=torch.float32)
 
     def __len__(self):
-        # Number of data points we have.
         return self.X.shape[0]
 
     def __getitem__(self, idx):
-        # Return the idx-th data point of the dataset
         data_point_x = self.X[idx]
         data_point_y = self.y[idx]
         return data_point_x, data_point_y
@@ -96,41 +96,284 @@ def LatinHypercube(dim_sample, low_bounds, upp_bounds, num_samples):
     sampler = qmc.LatinHypercube(d=dim_sample)
     sample = sampler.random(n=num_samples)
 
-    l_bounds = low_bounds  # ,0.001 , 0.02, 0.0015
-    u_bounds = upp_bounds  # , 0.0025 ,0.3, 0.0025
+    l_bounds = low_bounds
+    u_bounds = upp_bounds
     sample_params = qmc.scale(sample, l_bounds, u_bounds)
     return sample_params
 
 
 class ParametricLANDO:
 
-    def __init__(self, kernel, horizon_train, sparsity_tol, num_samples_train, num_sensors):
+    def __init__(self, kernel, horizon_train, sparsity_tol, num_samples_train, num_sensors, batch_frac, params_varied,
+                 low_bound, upp_bound, fixed_params_val):
         """
         Class that implements the parametric form of the LANDO framework.
         :param kernel: The chosen kernel. For instance this be linear, quadratic or gaussian. For this Lotka-Volterra
-        problem, the quadratic kernel is used.
+        problem, the quadratic kernel is used, since it yields the best performance.
         :param horizon_train: The time horizon that we train the model. e.g. if horizon_train = 400, we train the model
         for t in [0, 400].
         :param sparsity_tol: The sparsity threshold needed for the sparse dictionary algorithm
         :param num_samples_train: Number of "mu" samples that are used for training
         :param num_sensors: Number of sensors that the f(x) is discretized.
+        :param batch_frac: fraction of the traininng data to be used in 1 batch
+        :param params_varied: number of parameters that are varied
+        :param low_bound: the lower bound of parameters that are sampled
+        :param upp_bound: the upper bound of parameters that are sampled
+        :param fixed_params_val: the values of the parameters that are assumed to be fixed
         """
         self.kernel = kernel
         self.T_end_train = horizon_train
         self.sparsity_tol = sparsity_tol
         self.num_samples = num_samples_train
         self.num_sensors = num_sensors
+        self.batch_size_frac = batch_frac
+        self.num_params_varied = params_varied
+        self.low_bounds = low_bound
+        self.upp_bounds = upp_bound
+        self.params_fixed = fixed_params_val
+
+    def train_fnn(self, fnn_depth, fnn_width, fraction_train, num_samples_test,
+                  lando_dynamics, true_dynamics_test, epochs, param_samples_test, verbose=True):
+
+        ### Set up the neural network to learn the mapping
+        Mapping_FNN = FNN(num_input=self.num_params_varied, num_output=self.dofs, depth=fnn_depth, width=fnn_width)
+
+        optimizer = torch.optim.Adam(Mapping_FNN.parameters(), lr=1e-3)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.04, patience=3)
+        loss_criterion = torch.nn.MSELoss()
+
+        ### Split the parametric samples into training and validation data
+        TrainSamples = int(self.param_samples.shape[0] * fraction_train)
+        ### Number of samples for validation
+        ValidSamples = self.param_samples.shape[0] - TrainSamples
+        ### Number of samples for test
+        TestSamples = num_samples_test
+
+        if self.num_params_varied > 1:
+            scaler = preprocessing.MaxAbsScaler()
+
+        ### If 1+ parameters are varied, then they are scaled to the range (0, 1).
+        ### This scaling enhances the performance of the NN interpolator
+        if self.num_params_varied > 1:
+            X_train = scaler.fit_transform(self.param_samples[:TrainSamples, :self.num_params_varied])
+            X_valid = scaler.fit_transform(self.param_samples[TrainSamples:, :self.num_params_varied])
+            X_test = scaler.fit_transform(param_samples_test[:, :self.num_params_varied])
+        else:
+            X_train = self.param_samples[:TrainSamples, :self.num_params_varied]
+            X_valid = self.param_samples[TrainSamples:, :self.num_params_varied]
+            X_test = param_samples_test[:, :self.num_params_varied]
+
+        y_train = np.vstack([lando_dynamics[:TrainSamples][i][:, -1] for i in range(TrainSamples)])
+        y_valid = np.vstack([lando_dynamics[TrainSamples:][i][:, -1] for i in range(ValidSamples)])
+        y_test = np.vstack([true_dynamics_test[i] for i in range(TestSamples)])
+
+        dataset_train = Data(X=X_train, y=y_train)
+        dataset_valid = Data(X=X_valid, y=y_valid)
+        dataset_test = Data(X=X_test, y=y_test)
+
+        train_loader = DataLoader(dataset=dataset_train, batch_size=int(TrainSamples * self.batch_size_frac))
+        valid_loader = DataLoader(dataset=dataset_valid, batch_size=int(ValidSamples * self.batch_size_frac))
+        test_loader = DataLoader(dataset=dataset_test, batch_size=int(TestSamples * self.batch_size_frac))
+
+        loss_epochs = []
+        valid_errors = []
+        best_val_loss = float('inf')
+        best_model_weights = None
+
+        if verbose:
+            pbar = tqdm(total=epochs, desc="Epochs training...")
+        for epoch in range(epochs):
+            # Training Phase
+            Mapping_FNN.train(True)
+            relative_error_train = []
+            relative_error_valid = []
+            for x, y in train_loader:
+                optimizer.zero_grad()
+                y_pred = Mapping_FNN(x)
+                loss = loss_criterion(y_pred, y)
+                loss.backward()
+                optimizer.step()
+
+                ### Mean relative error of the batch
+                relative_error_train.append(
+                    np.linalg.norm(y.detach().numpy() - y_pred.detach().numpy()) / np.linalg.norm(y.detach().numpy()))
+
+            # Mean relative error of the epoch
+            loss_epoch = np.mean(relative_error_train)
+            loss_epochs.append(loss_epoch)
+
+            # Validation Phase
+            Mapping_FNN.eval()
+            with torch.no_grad():
+                for x_val, y_val in valid_loader:
+                    y_val_pred = Mapping_FNN(x_val)
+                    relative_error_valid.append(np.linalg.norm(y_val.detach().numpy() - y_val_pred.detach().numpy())
+                                                / np.linalg.norm(y_val.detach().numpy()))
+
+                mean_relative_err_val = np.mean(relative_error_valid)
+            valid_errors.append(mean_relative_err_val)
+
+            ### Keep track of the model that results to the minimum validation error
+            if mean_relative_err_val < best_val_loss:
+                best_val_loss = mean_relative_err_val
+                best_model_weights = Mapping_FNN.state_dict()
+
+            ### Stop the training process if validation error < 0.7%
+            if mean_relative_err_val < 0.007:
+                print(f"Stopping early at epoch {epoch}, since mean_relative_err_val < 0.009")
+                break
+
+            ### Reduce the learning rate when we have validation error < 0.95%
+            if mean_relative_err_val < 0.008:
+                scheduler.step(mean_relative_err_val)
+            if verbose:
+                print(f"Epoch   Training   Validation\n"
+                      f"{epoch}   {loss_epoch}   {mean_relative_err_val}\n"
+                      f"====================================================")
+            if verbose:
+                pbar.update()
+        if verbose:
+            pbar.close()
+        print("Done training!")
+
+        if verbose:
+            ### Plot the losses
+            plt.semilogy(loss_epochs, label='Training error')
+            plt.semilogy(valid_errors, label='Validation error')
+            plt.xlabel("# Epochs")
+            plt.ylabel("Relative MSE")
+            plt.legend()
+            plt.show()
+
+        if best_model_weights:
+            Mapping_FNN.load_state_dict(best_model_weights)
+
+        ### For all unseen test parameters, evaluate the neural network after training and approximate f(x,t*;mu*)
+        test_error = []
+        predicted_dynamics = []
+        Mapping_FNN.eval()
+        with torch.no_grad():
+            for x_test, y_test_ in test_loader:
+                y_pred_test = Mapping_FNN(x_test)
+                for row1 in range(len(y_test_)):
+                    predicted_dynamics.append(y_pred_test[row1])
+
+                error_batch_test = np.linalg.norm(
+                    y_test_.detach().numpy() - y_pred_test.detach().numpy()) / np.linalg.norm(y_test_.detach().numpy())
+
+                test_error.append(error_batch_test)
+        print(f"The mean test error is {np.mean(test_error)} based on {TestSamples} test samples")
+
+        return Mapping_FNN, X_train, y_train, X_test, y_test, np.mean(test_error)
+
+    @staticmethod
+    def Visual_1D(x_train, y_train, x_test, y_test, interp_model, IC_predict, T_end_test):
+        X_train_sort = np.sort(x_train, axis=0)
+        sort_index = np.squeeze(np.argsort(x_train, axis=0))
+        y_train_sort = y_train[sort_index, :]
+
+        y_final_pred = interp_model(torch.from_numpy(X_train_sort).to(torch.float32))
+        plt.figure(figsize=(11, 5))
+        plt.plot(X_train_sort, y_train_sort[:, 0], label=r'$x_1$')
+        plt.plot(X_train_sort, y_train_sort[:, 1], label=r'$x_2$')
+        plt.plot(X_train_sort, y_final_pred[:, 0].detach().numpy(), '.', label=r'$x^{pred}_{1}$')
+        plt.plot(X_train_sort, y_final_pred[:, 1].detach().numpy(), '.', label=r'$x^{pred}_{2}$')
+        plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+        plt.grid(True)
+        plt.xlabel(r'$\mu_1 = \alpha$')
+        plt.ylabel(r"$\mathbf{x}$")
+        filename = f"Training.png"
+        directory = f"/Users/konstantinoskevopoulos/Desktop/Lotka_Volterra_Results/Param1D/IC={IC_predict}, t_end={T_end_test}/"
+        plt.savefig(directory + filename)
+        plt.show()
+
+        X_test_sort = np.sort(x_test, axis=0)
+        sort_index = np.squeeze(np.argsort(x_test, axis=0))
+        y_test_sort = y_test[sort_index, :]
+
+        y_final_pred = interp_model(torch.from_numpy(X_test_sort).to(torch.float32))
+
+        plt.figure(figsize=(11, 5))
+        plt.plot(X_test_sort, y_test_sort[:, 0], label=r'$x_1$')
+        plt.plot(X_test_sort, y_test_sort[:, 1], label=r'$x_2$')
+        plt.grid(True)
+        plt.plot(X_test_sort, y_final_pred[:, 0].detach().numpy(), '.', label=r'$x^{pred}_{1}$')
+        plt.plot(X_test_sort, y_final_pred[:, 1].detach().numpy(), '.', label=r'$x^{pred}_{2}$')
+        plt.xlabel(r'$\mu_1 = \alpha$')
+        plt.ylabel(r"$\mathbf{x}$")
+        plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+        filename = "Test.png"
+        plt.savefig(directory + filename)
+        plt.show()
+
+        plt.figure(figsize=(11, 5))
+        plt.plot(X_test_sort, y_test_sort[:, 0], label=r'$x_1$ Ground Truth')
+        plt.plot(X_test_sort, y_test_sort[:, 1], label=r'$x_2$ Ground Truth')
+        plt.plot(X_train_sort, y_train_sort[:, 0], '-.', color='black', label=r'$x_1$ LANDO')
+        plt.plot(X_train_sort, y_train_sort[:, 1], '-.', color='black', label=r'$x_2$ LANDO')
+        plt.ylabel(r"$\mathbf{x}$")
+        plt.xlabel(r'$\mu_1 = \alpha$')
+        plt.legend(loc='best')
+        filename = "LANDO_Vs_Truth.png"
+        plt.grid(True)
+        plt.savefig(directory + filename)
+        plt.show()
+
+    @staticmethod
+    def Visual_2D(x_train, y_train, x_test, y_test, test_samples, train_samples, interp_model, lando_error,
+                  IC_predict, T_end_test):
+
+        y_final_pred = interp_model(torch.from_numpy(x_train).to(torch.float32))
+        train_error = []
+        for row in range(y_train.shape[0]):
+            rel_error_train = np.linalg.norm(y_train[row] - y_final_pred[row].detach().numpy()) / np.linalg.norm(
+                y_train[row])
+            train_error.append(rel_error_train)
+
+        y_final_pred_test = interp_model(torch.from_numpy(x_test).to(torch.float32))
+        test_error = []
+        for row in range(y_test.shape[0]):
+            rel_error_test = np.linalg.norm(y_test[row] - y_final_pred_test[row].detach().numpy()) / np.linalg.norm(
+                y_test[row])
+            test_error.append(rel_error_test)
+
+        directory = f"/Users/konstantinoskevopoulos/Desktop/Lotka_Volterra_Results/Param2D/IC={IC_predict}, t_end={T_end_test}/"
+        plt.figure()
+        plt.scatter(train_samples[:, 0], train_samples[:, 1], c=train_error, cmap="plasma")
+        plt.xlabel(r"$\mu_1$")
+        plt.ylabel(r"$\mu_2$")
+        filename = "Training.png"
+        plt.colorbar(label=r'$L_2$ relative error')
+        plt.savefig(directory + filename)
+        plt.show()
+
+        plt.figure()
+        plt.scatter(test_samples[:, 0], test_samples[:, 1], c=test_error, cmap="plasma")
+        plt.xlabel(r"$\mu_1$")
+        plt.ylabel(r"$\mu_2$")
+        filename = "Test.png"
+        plt.colorbar(label=r'$L_2$ relative error')
+        plt.savefig(directory + filename)
+        plt.show()
+
+        plt.figure()
+        plt.scatter(train_samples[:, 0], train_samples[:, 1], c=lando_error, cmap="plasma")
+        plt.xlabel(r"$\mu_1$")
+        plt.ylabel(r"$\mu_2$")
+        filename = "LANDO_Vs_Truth.png"
+        plt.colorbar(label=r'LANDO $L_2$ relative error')
+        plt.savefig(directory + filename)
+        plt.show()
 
     def OfflinePhase(self):
-        # First, the parameters for training are sampled from a latin hypercube
-        # This will change with the active learning method.
-        param_samples_lh = LatinHypercube(dim_sample=1, low_bounds=[0.01], upp_bounds=[0.1],
-                                          num_samples=self.num_samples)
-        self.params_not_varied = np.array([0.002, 0.2, 0.0025])  # 0.002, 0.2
-        self.params_not_varied = np.tile(self.params_not_varied, (self.num_samples, 1))
+        ### First, the parameters for training are sampled from a latin hypercube
+        ### This will change with the active learning method.
+        param_samples_lh = LatinHypercube(dim_sample=self.num_params_varied, low_bounds=self.low_bounds,
+                                          upp_bounds=self.upp_bounds, num_samples=self.num_samples)
+
+        self.params_not_varied = np.tile(self.params_fixed, (self.num_samples, 1))
 
         self.param_samples = np.concatenate((param_samples_lh, self.params_not_varied), axis=1)
-
 
         self.SparseDicts_all = []
         self.scaled_X_all = []
@@ -139,9 +382,9 @@ class ParametricLANDO:
         Y_perm_all = []
         X_all = []
 
+        ### The sparse dictionaries for all the parametric samples are generated
+        ### So, for each training sample we have W_tilde, x_tilde(sparse dictionary), and k(x_tilde, x)
         pbar = tqdm(total=self.num_samples, desc=f"Offline Phase -> Generation of training data...")
-        # Now we generate the sparse dictionaries for all the parametric samples.
-        # So, for each training sample we have W_tilde, x_tilde(sparse dictionary), and k(x_tilde, x)
         for val, param_sample in enumerate(self.param_samples):
             X, _ = Lotka_Volterra_Snapshot(params=param_sample, T=self.T_end_train, num_sensors=self.num_sensors)
             Y = Lotka_Volterra_Deriv(X, *param_sample)
@@ -163,8 +406,11 @@ class ParametricLANDO:
             pbar.update()
         pbar.close()
 
+        ### Degrees of freedom of the system of interest
+        self.dofs = X.shape[0]
+
         # Compute W tilde and form the model for all the training samples.
-        self.W_tildes = [y_perm @ np.linalg.pinv(self.kernel(Sparse_Dict, scaled_X * x_perm))
+        self.W_tildes = [y_perm @ np.linalg.pinv(self.kernel(Sparse_Dict, scaled_X * x_perm), rcond=1e-7)
                          for y_perm, Sparse_Dict, scaled_X, x_perm in
                          zip(Y_perm_all, self.SparseDicts_all, self.scaled_X_all, X_perm_all)]
 
@@ -173,15 +419,15 @@ class ParametricLANDO:
 
         models = [W_tilde_mat @ kernel_mat for W_tilde_mat, kernel_mat in zip(self.W_tildes, kernels)]
 
-        # sanity check -> compute reconstruction error to make sure it is small
-        reconstruction_relative_errors = [np.linalg.norm(Y_vals[i][0] - models[i][0]) / np.linalg.norm(Y_vals[i][0])
+        ### Compute the reconstruction error to make sure it is sufficiently small
+        reconstruction_relative_errors = [np.linalg.norm(Y_vals[i] - models[i]) / np.linalg.norm(Y_vals[i])
                                           for i in range(len(Y_vals))]
 
         print(f"Training Data: The mean relative reconstruction errors are: {reconstruction_relative_errors}")
 
         return self.W_tildes, self.SparseDicts_all, self.param_samples
 
-    def OnlinePhase(self, num_samples_test, T_end_test, fraction_train, fnn_depth, fnn_width, epochs):
+    def OnlinePhase(self, num_samples_test, T_end_test, fraction_train, fnn_depth, fnn_width, epochs, IC_predict, verb):
         """
         Method that implements the online phase of the algorithm.
         :param num_samples_test: The number of test samples. These are parameters "mu" that are unseen during the training
@@ -194,238 +440,82 @@ class ParametricLANDO:
         :param epochs: Epochs that the neural network is trained for
         :return:
         """
-        # Generate the test data -> new parameters to test for the specific T_end_test
-        param_samples_lh_test = LatinHypercube(dim_sample=1, low_bounds=[0.01], upp_bounds=[0.1],
-                                               num_samples=num_samples_test)
+        ### Generate the test data --> new parameters to test for the specific T_end_test (t*)
+        param_samples_lh_test = LatinHypercube(dim_sample=self.num_params_varied, low_bounds=self.low_bounds,
+                                               upp_bounds=self.upp_bounds, num_samples=num_samples_test)
 
-        params_not_varied_test = np.array([0.002, 0.2, 0.0025])  # 0.002, 0.2
+        params_not_varied_test = self.params_fixed
         params_not_varied_test = np.tile(params_not_varied_test, (num_samples_test, 1))
 
         param_samples_test = np.concatenate((param_samples_lh_test, params_not_varied_test), axis=1)
 
-        # For each parameter in the training set run the LANDO algorithm to compute the dynamics until T_end_test
-        # T_end_test > horizon_train ---> extrapolation
+        ### For each parameter in the training set integrate the LANDO prediction f(x) to compute the dynamics until T_end_test
+        ### Typically we can have: T_end_test > horizon_train
         lando_dynamics = []
         true_dynamics = []
         pbar = tqdm(total=self.num_samples, desc=f"Online Phase -> Prediction of f(x, t*; mu)...")
         for i, sample in enumerate(self.param_samples):
             ### This is to compare with the predicted value
-            X, _ = Lotka_Volterra_Snapshot(params=sample, T=T_end_test, num_sensors=self.num_sensors)
+            X, _ = Lotka_Volterra_Snapshot(params=sample, T=T_end_test, num_sensors=self.num_sensors,
+                                           x0=IC_predict[0], y0=IC_predict[1])
             true_dynamics.append(X)
 
             def Model_General(t, z):
+                """
+                Approximation of f(x) = dxdt produced by LANDO framework
+                f(x) needs to be integrated, to obtain the state of the system "x"
+                """
                 x0, x1 = z
                 x = np.array([[x0], [x1]])
                 return (self.W_tildes[i] @ self.kernel(self.SparseDicts_all[i], self.scaled_X_all[i] * x)).flatten()
 
-            x_pred = Predict(model=Model_General, Tend=T_end_test, IC=[80, 20], sensors=self.num_sensors) ### TODO: Change the IC here
+            x_pred = Predict(model=Model_General, Tend=T_end_test, IC=IC_predict,
+                             sensors=self.num_sensors)
             lando_dynamics.append(x_pred)
 
             pbar.update()
         pbar.close()
 
-        # sanity check -> compute reconstruction error to make sure it is small
-        reconstruction_relative_errors = [np.linalg.norm(true_dynamics[i][0] - lando_dynamics[i][0]) / np.linalg.norm(true_dynamics[i][0])
-                                          for i in range(len(true_dynamics))]
+        ### Compute reconstruction errors for "x" to make sure they are sufficiently small
+        reconstruction_relative_errors = [
+            np.linalg.norm(true_dynamics[i] - lando_dynamics[i]) / np.linalg.norm(true_dynamics[i])
+            for i in range(len(true_dynamics))]
 
         print(f"The mean relative reconstruction errors are: {reconstruction_relative_errors}")
 
-        # Now, for each parameter value in the test set, compute the true dynamics for comparison
+        ### For each parameter value in the test set, compute the true dynamics for comparison
         true_dynamics_test = []
         for val, sample_test in enumerate(param_samples_test):
-            X, _ = Lotka_Volterra_Snapshot(params=sample_test, T=T_end_test, num_sensors=self.num_sensors)
+            X, _ = Lotka_Volterra_Snapshot(params=sample_test, T=T_end_test, num_sensors=self.num_sensors,
+                                           x0=IC_predict[0], y0=IC_predict[1])
+
+            ### The prediction is made only for t*
             true_dynamics_test.append(X[:, -1])
 
-        # Set up the neural network to learn the mapping
-        Mapping_FNN = FNN(num_input=1,
-                          num_output=X.shape[0], depth=fnn_depth, width=fnn_width)
+        interp_model, x_train, y_train, x_test, y_test, mean_test_error = self.train_fnn(fnn_depth=fnn_depth,
+                                                                                         fnn_width=fnn_width,
+                                                                                         fraction_train=fraction_train,
+                                                                                         lando_dynamics=lando_dynamics,
+                                                                                         num_samples_test=num_samples_test,
+                                                                                         true_dynamics_test=true_dynamics_test,
+                                                                                         epochs=epochs,
+                                                                                         param_samples_test=param_samples_test,
+                                                                                         verbose=verb)
+        if self.num_params_varied == 1:
+            self.Visual_1D(x_train=x_train, y_train=y_train, x_test=x_test, y_test=y_test,
+                           interp_model=interp_model, IC_predict=IC_predict, T_end_test=T_end_test)
+        else:
 
-        optimizer = torch.optim.LBFGS(Mapping_FNN.parameters(), lr=1e-3)
-        loss_criterion = torch.nn.MSELoss()
+            test_samples = param_samples_lh_test
+            train_samples = self.param_samples[:int(fraction_train * self.num_samples), :self.num_params_varied]
+            lando_error = reconstruction_relative_errors[:int(fraction_train * self.num_samples)]
 
-        # Split the param_samples matrix into training and validation data
-        TrainSamples = int(self.param_samples.shape[0] * fraction_train)
-        # Number of samples for validation
-        ValidSamples = self.param_samples.shape[0] - TrainSamples
-        # Number of samples for test
-        TestSamples = num_samples_test
+            self.Visual_2D(x_train=x_train, x_test=x_test, y_train=y_train, y_test=y_test,
+                           interp_model=interp_model, test_samples=test_samples,
+                           train_samples=train_samples, lando_error=lando_error,
+                           IC_predict=IC_predict, T_end_test=T_end_test)
 
-        # These are fed to the Dataloader, and then to the NN for the training
-        # Note that now we scale the parameters to the range (0, 1).
-        # Hopefully, this will enhance the performance of the NN interpolator
-        X_train = self.param_samples[:TrainSamples, 0].reshape(-1, 1)
-        y_train = np.vstack([lando_dynamics[:TrainSamples][i][:, -1] for i in range(TrainSamples)])
-
-        X_valid = self.param_samples[TrainSamples:, 0].reshape(-1, 1)
-        y_valid = np.vstack([lando_dynamics[TrainSamples:][i][:, -1] for i in range(ValidSamples)])
-
-        X_test = param_samples_test[:, 0].reshape(-1, 1)
-        y_test = np.vstack([true_dynamics_test[i] for i in range(TestSamples)])
-
-        # Construct the datasets
-        dataset_train = Data(X=X_train, y=y_train)
-        dataset_valid = Data(X=X_valid, y=y_valid)
-        dataset_test = Data(X=X_test, y=y_test)
-
-        train_loader = DataLoader(dataset=dataset_train, batch_size=int(TrainSamples * 0.45))
-        valid_loader = DataLoader(dataset=dataset_valid, batch_size=int(ValidSamples * 0.45))
-        test_loader = DataLoader(dataset=dataset_test, batch_size=int(TestSamples * 0.45))
-
-        # Now we train the model
-        epochs = epochs
-
-        pbar = tqdm(total=epochs, desc="Epochs training...")
-        loss_epochs = []
-        valid_errors = []
-        best_val_loss = float('inf')
-        best_model_weights = None
-
-
-
-        for epoch in range(epochs):
-            # Training Phase
-            Mapping_FNN.train(True)
-            relative_error_train = []
-            relative_error_valid = []
-            for x, y in train_loader:
-
-                def closure():
-                    if torch.is_grad_enabled():
-                        optimizer.zero_grad()
-                    y_pred = Mapping_FNN(x)
-                    loss = loss_criterion(y_pred, y)
-                    if loss.requires_grad:
-                        loss.backward()
-                    return loss
-
-                optimizer.step(closure=closure)
-
-                # _, y_pred = closure()
-                # compute the mean relative error of the batch
-                # relative_error_train.append(torch.mean(abs(y - y_pred) / abs(y)).detach().numpy())
-            print(closure().item())
-            # compute the relative error of the epoch
-            # loss_epoch = np.mean(relative_error_train)
-            # loss_epochs.append(loss_epoch)
-
-            # Validation Phase
-            Mapping_FNN.eval()
-            with torch.no_grad():
-                for x_val, y_val in valid_loader:
-                    y_val_pred = Mapping_FNN(x_val)
-                    relative_error_valid.append(torch.mean(abs(y_val - y_val_pred) / y_val).detach().numpy())
-
-                mean_relative_err_val = np.mean(relative_error_valid)
-            valid_errors.append(mean_relative_err_val)
-
-            # Keep track of the model that results to the minimum validation error
-            if mean_relative_err_val < best_val_loss:
-                best_val_loss = mean_relative_err_val
-                best_model_weights = Mapping_FNN.state_dict()
-            # The below code is used if we want to stop the training process earlier, if validation error < 1%
-            # Now this feature is disabled, because we want to test the performance of the FNN during the whole training
-
-            # if mean_relative_err_val < 0.009:
-            #     print(f"Stopping early at epoch {epoch}, since mean_relative_err_val < 0.009")
-            #     break
-            #
-            # # Reduce the learning rate when we have validation error < 0.01
-            # if mean_relative_err_val < 0.0092:
-            #     scheduler.step(mean_relative_err_val)
-
-            print(f"Epoch   Training   Validation\n"
-                  f"{epoch}  {mean_relative_err_val}\n"
-                  f"====================================================")
-            # print(f"Epoch   Training   Validation\n"
-            #       f"{epoch}   {loss_epoch}   {mean_relative_err_val}\n"
-            #       f"====================================================")
-
-            pbar.update()
-        pbar.close()
-        print("Done training!")
-
-        # Plot the losses
-        plt.semilogy(loss_epochs, label='Training error')
-        plt.semilogy(valid_errors, label='Validation error')
-        plt.xlabel("# Epochs")
-        plt.ylabel("Relative MSE")
-        plt.legend()
-        plt.show()
-
-        if best_model_weights:
-            Mapping_FNN.load_state_dict(best_model_weights)
-
-        # For all these unseen test parameters, evaluate the neural network after training and approximate f(x,t*;mu*)
-        test_error = []
-        predicted_dynamics = []
-        Mapping_FNN.eval()
-        with torch.no_grad():
-            for x_test, y_test in test_loader:
-                y_pred_test = Mapping_FNN(x_test)
-                for row1 in range(len(y_test)):
-                    predicted_dynamics.append(y_pred_test[row1])
-
-                error_batch_test = torch.mean(abs(y_test - y_pred_test) / y_test)
-                test_error.append(error_batch_test.detach().numpy())
-        print(f"The mean test error is {np.mean(test_error)} based on {TestSamples} test samples")
-
-        return predicted_dynamics, true_dynamics_test, test_error, param_samples_test
-
-
-T_train = 400
-NumSamples_Train = 1300
-sensors = 600
-sparsity_lando = 1e-6
-
-NumSamples_Test = 2000
-T_test = int(1.5 * T_train)
-train_frac = 0.7
-depth = 1
-width = 20
-epochs = 60000
-
-# Perform the whole procedure of the parametric LANDO. First we perform the offline phase of the algorithm
-# and subsequently, the online phase is performed
-
-parametric_lando = ParametricLANDO(kernel=quadratic_kernel, horizon_train=T_train, num_samples_train=NumSamples_Train,
-                                   num_sensors=sensors, sparsity_tol=sparsity_lando)
-
-w_tildes, sparse_dicts, mu_samples_train = parametric_lando.OfflinePhase()
-
-fx_pred, fx_true, error_test, param_samples_test = parametric_lando.OnlinePhase(num_samples_test=NumSamples_Test,
-                                                                                T_end_test=T_test,
-                                                                                fraction_train=train_frac,
-                                                                                fnn_depth=depth, fnn_width=width,
-                                                                                epochs=epochs)
-
-print(f"fx_pred has shape {fx_pred[0].shape}")
-
-# Plot the predicted f(x) vs ground truth dxdt
-t = np.linspace(0, T_test, sensors)
-plt.style.use('_mpl-gallery')
-
-plt.figure(figsize=(9, 6))
-for i in range(len(fx_pred)):
-    relative_error = np.linalg.norm(fx_true[i]- fx_pred[i].detach().numpy())/np.linalg.norm(fx_true[i])
-    if relative_error > np.mean(error_test): # if the prediction error is worse than the mean error
-        plt.scatter(param_samples_test[i, 0], param_samples_test[i, 1], color='red', label='Not accurate')
-    else:
-        plt.scatter(param_samples_test[i, 0], param_samples_test[i, 1],  color='green', label='Good prediction')
-    plt.ylabel(r'$\mu_2$')
-    plt.xlabel(r'$\mu_1$')
-    plt.title("Exploration of the parameter space")
-plt.show()
-
-
-for i in range(len(fx_pred)):
-    plt.plot(fx_pred[i], '-o', color='green', label="Prediction")
-    plt.plot(fx_true[i], '-o', color='red', label="Ground Truth")
-    plt.xlabel(r"$t_*$")
-    plt.ylabel(r"$x^{\mu_i}_{t_*}$")
-    plt.title(f"Relative L2 error: {np.linalg.norm(fx_true[i]- fx_pred[i].detach().numpy())/np.linalg.norm(fx_true[i])}")
-    plt.legend()
-    plt.show()
-
+        return mean_test_error
 
 
 
