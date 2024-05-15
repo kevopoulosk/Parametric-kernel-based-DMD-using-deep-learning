@@ -21,8 +21,8 @@ def LatinHypercube(dim_sample, low_bounds, upp_bounds, num_samples):
     sampler = qmc.LatinHypercube(d=dim_sample)
     sample = sampler.random(n=num_samples)
 
-    l_bounds = low_bounds  # ,0.001 , 0.02, 0.0015
-    u_bounds = upp_bounds  # , 0.0025 ,0.3, 0.0025
+    l_bounds = low_bounds
+    u_bounds = upp_bounds
     sample_params = qmc.scale(sample, l_bounds, u_bounds)
     return sample_params
 
@@ -32,7 +32,7 @@ directory_data = '/Users/konstantinoskevopoulos/Documents/Heat_Eq_Thesis/Snapsho
 directory_samples = '/Users/konstantinoskevopoulos/Documents/Heat_Eq_Thesis/Parameter_Samples/'
 
 
-samples_heat_eq = LatinHypercube(dim_sample=2, low_bounds=[0.01, 0.01], upp_bounds=[10, 10], num_samples=500)
+samples_heat_eq = LatinHypercube(dim_sample=2, low_bounds=[0.5, 5], upp_bounds=[1, 10], num_samples=300)
 
 filename_train = 'samples_heat_eq.txt'
 

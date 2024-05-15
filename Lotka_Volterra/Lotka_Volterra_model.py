@@ -27,7 +27,7 @@ def Lotka_Volterra(alpha, beta, gamma, delta, T, x0, y0, num_sensors):
 
         return [dx0_dt, dx1_dt]
 
-    sol = solve_ivp(Lotka_Volterra, t_span=[0, T], y0=[x0, y0], method="RK45",
+    sol = solve_ivp(Lotka_Volterra, t_span=[0, T], y0=[x0, y0], method="BDF",
                     t_eval=np.linspace(0, T, num=num_sensors), args=(alpha, beta, gamma, delta))
 
     x0 = sol.y[0]

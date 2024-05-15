@@ -23,7 +23,7 @@ def Scale(X):
     return 1/np.max(np.abs(X), axis=1).reshape(-1, 1)
 
 
-def SparseDictionary(SnapMat, scale, kernel, tolerance, pbar_bool=True):
+def SparseDictionary(SnapMat, scale, kernel, tolerance, pbar_bool=True, al_sampling=False):
     """
     Function that generates the sparse dictionary
     :param SnapMat: The permuted snapshot matrix X
@@ -85,7 +85,11 @@ def SparseDictionary(SnapMat, scale, kernel, tolerance, pbar_bool=True):
     if pbar_bool:
         pbar.close()
 
-    return sparse_dict, SnapMat, C, idx
+    ### Return different things if we perform active learning
+    if al_sampling:
+        return sparse_dict, C, k_tt, k_tilde_prev, st, m
+    else:
+        return sparse_dict, SnapMat, C, idx, delta_vals
 
 
 def quadratic_kernel(u, v, c=0.1, d=2, slope=1):
@@ -96,7 +100,7 @@ def linear_kernel(u, v, c=0.1):
     return u.T @ v + c
 
 
-def gauss_kernel(X1, X2, Sigma=0.01):
+def gauss_kernel(X1, X2, Sigma=0.2):
     dim1 = X1.shape[1]
     dim2 = X2.shape[1]
 
@@ -149,4 +153,5 @@ def Predict(model, Tend, IC, dt=None, comp=None, sensors=300, type="Cont"):
         return out_mat
 
 
-
+def kernel_cosine_sim(u, v):
+    return (u.T @ v)/(np.linalg.norm(u)*np.linalg.norm(v))

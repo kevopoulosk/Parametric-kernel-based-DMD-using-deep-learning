@@ -1,12 +1,14 @@
 import matplotlib.pyplot as plt
+import numpy as np
 from scipy.stats import qmc
-from Lotka_Volterra_model import *
-from Sparse_Dictionary_Learning import *
+from Lotka_Volterra.Lotka_Volterra_model import *
+from Lotka_Volterra.Sparse_Dictionary_Learning import *
 from torch.utils.data import DataLoader
 from sklearn import preprocessing
 import torch.utils.data as data
 import torch
 from torch import nn
+from scipy.interpolate import RBFInterpolator
 
 
 class Snake(nn.Module):
@@ -105,7 +107,7 @@ def LatinHypercube(dim_sample, low_bounds, upp_bounds, num_samples):
 class ParametricLANDO:
 
     def __init__(self, kernel, horizon_train, sparsity_tol, num_samples_train, num_sensors, batch_frac, params_varied,
-                 low_bound, upp_bound, fixed_params_val):
+                 low_bound, upp_bound, fixed_params_val, rbf=False):
         """
         Class that implements the parametric form of the LANDO framework.
         :param kernel: The chosen kernel. For instance this be linear, quadratic or gaussian. For this Lotka-Volterra
@@ -131,6 +133,55 @@ class ParametricLANDO:
         self.low_bounds = low_bound
         self.upp_bounds = upp_bound
         self.params_fixed = fixed_params_val
+        self.rbf = rbf
+
+    @staticmethod
+    def relative_error(y_test, prediction, tensor=False, mean=True):
+        err_list = []
+        for row in range(y_test.shape[0]):
+            if tensor:
+                err = np.linalg.norm(y_test[row] - prediction[row].detach().numpy()) / np.linalg.norm(y_test[row])
+            else:
+                err = np.linalg.norm(y_test[row] - prediction[row]) / np.linalg.norm(y_test[row])
+
+            err_list.append(err)
+
+        if mean:
+            return np.mean(err_list)
+        else:
+            return err_list
+
+    def RBF_Interp(self, fraction_train, num_samples_test, param_samples_test, lando_dynamics, true_dynamics_test):
+        ### Split the parametric samples into training and validation data
+        TrainSamples = int(self.param_samples.shape[0] * fraction_train)
+        ### Number of samples for test
+        TestSamples = num_samples_test
+
+        if self.num_params_varied > 1:
+            scaler = preprocessing.MaxAbsScaler()
+
+        ### If 1+ parameters are varied, then they are scaled to the range (0, 1).
+        ### This scaling enhances the performance of the NN interpolator
+        if self.num_params_varied > 1:
+            X_train = scaler.fit_transform(self.param_samples[:TrainSamples, :self.num_params_varied])
+            X_test = scaler.fit_transform(param_samples_test[:, :self.num_params_varied])
+        else:
+            X_train = self.param_samples[:TrainSamples, :self.num_params_varied]
+            X_test = param_samples_test[:, :self.num_params_varied]
+
+        y_train = np.vstack([lando_dynamics[:TrainSamples][i][:, -1] for i in range(TrainSamples)])
+        y_test = np.vstack([true_dynamics_test[i] for i in range(TestSamples)])
+
+        ### RBF interpolation
+        rbf_function = RBFInterpolator(X_train, y_train, kernel='cubic', degree=1)
+
+        prediction = rbf_function(X_test)
+
+        mean_relative_error = self.relative_error(y_test=y_test, prediction=prediction)
+
+        print(f"The mean test error is {mean_relative_error} based on {TestSamples} test samples")
+
+        return prediction, mean_relative_error, rbf_function, X_train, y_train, X_test, y_test
 
     def train_fnn(self, fnn_depth, fnn_width, fraction_train, num_samples_test,
                   lando_dynamics, true_dynamics_test, epochs, param_samples_test, verbose=True):
@@ -169,11 +220,9 @@ class ParametricLANDO:
 
         dataset_train = Data(X=X_train, y=y_train)
         dataset_valid = Data(X=X_valid, y=y_valid)
-        dataset_test = Data(X=X_test, y=y_test)
 
         train_loader = DataLoader(dataset=dataset_train, batch_size=int(TrainSamples * self.batch_size_frac))
         valid_loader = DataLoader(dataset=dataset_valid, batch_size=int(ValidSamples * self.batch_size_frac))
-        test_loader = DataLoader(dataset=dataset_test, batch_size=int(TestSamples * self.batch_size_frac))
 
         loss_epochs = []
         valid_errors = []
@@ -218,13 +267,13 @@ class ParametricLANDO:
                 best_val_loss = mean_relative_err_val
                 best_model_weights = Mapping_FNN.state_dict()
 
-            ### Stop the training process if validation error < 0.7%
-            if mean_relative_err_val < 0.007:
+            ### Stop the training process if validation error < 0.5%
+            if mean_relative_err_val < 0.006:
                 print(f"Stopping early at epoch {epoch}, since mean_relative_err_val < 0.009")
                 break
 
-            ### Reduce the learning rate when we have validation error < 0.95%
-            if mean_relative_err_val < 0.008:
+            ### Reduce the learning rate when we have validation error < 0.6%
+            if mean_relative_err_val < 0.007:
                 scheduler.step(mean_relative_err_val)
             if verbose:
                 print(f"Epoch   Training   Validation\n"
@@ -249,41 +298,48 @@ class ParametricLANDO:
             Mapping_FNN.load_state_dict(best_model_weights)
 
         ### For all unseen test parameters, evaluate the neural network after training and approximate f(x,t*;mu*)
-        test_error = []
-        predicted_dynamics = []
+
         Mapping_FNN.eval()
-        with torch.no_grad():
-            for x_test, y_test_ in test_loader:
-                y_pred_test = Mapping_FNN(x_test)
-                for row1 in range(len(y_test_)):
-                    predicted_dynamics.append(y_pred_test[row1])
+        prediction = Mapping_FNN(torch.from_numpy(X_test).to(torch.float32))
 
-                error_batch_test = np.linalg.norm(
-                    y_test_.detach().numpy() - y_pred_test.detach().numpy()) / np.linalg.norm(y_test_.detach().numpy())
+        mean_relative_error = self.relative_error(y_test=y_test, prediction=prediction, tensor=True)
 
-                test_error.append(error_batch_test)
-        print(f"The mean test error is {np.mean(test_error)} based on {TestSamples} test samples")
+        print(f"The mean test error is {mean_relative_error} based on {TestSamples} test samples")
 
-        return Mapping_FNN, X_train, y_train, X_test, y_test, np.mean(test_error)
+        return Mapping_FNN, X_train, y_train, X_test, y_test, mean_relative_error
 
-    @staticmethod
-    def Visual_1D(x_train, y_train, x_test, y_test, interp_model, IC_predict, T_end_test):
+    def Visual_1D(self, x_train, y_train, x_test, y_test, interp_model, IC_predict, T_end_test):
         X_train_sort = np.sort(x_train, axis=0)
         sort_index = np.squeeze(np.argsort(x_train, axis=0))
         y_train_sort = y_train[sort_index, :]
 
-        y_final_pred = interp_model(torch.from_numpy(X_train_sort).to(torch.float32))
+        if self.rbf:
+            y_final_pred_train = interp_model(X_train_sort)
+            error_train = self.relative_error(y_train_sort, y_final_pred_train)
+        else:
+            y_final_pred_train = interp_model(torch.from_numpy(X_train_sort).to(torch.float32))
+            error_train = self.relative_error(y_train_sort, y_final_pred_train, tensor=True)
+
         plt.figure(figsize=(11, 5))
         plt.plot(X_train_sort, y_train_sort[:, 0], label=r'$x_1$')
         plt.plot(X_train_sort, y_train_sort[:, 1], label=r'$x_2$')
-        plt.plot(X_train_sort, y_final_pred[:, 0].detach().numpy(), '.', label=r'$x^{pred}_{1}$')
-        plt.plot(X_train_sort, y_final_pred[:, 1].detach().numpy(), '.', label=r'$x^{pred}_{2}$')
-        plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
-        plt.grid(True)
         plt.xlabel(r'$\mu_1 = \alpha$')
         plt.ylabel(r"$\mathbf{x}$")
-        filename = f"Training.png"
+
+        if self.rbf:
+            plt.plot(X_train_sort, y_final_pred_train[:, 0], '.', label=r'$x^{pred}_{1}$')
+            plt.plot(X_train_sort, y_final_pred_train[:, 1], '.', label=r'$x^{pred}_{2}$')
+            filename = "Training_RBF.png"
+        else:
+            plt.plot(X_train_sort, y_final_pred_train[:, 0].detach().numpy(), '.', label=r'$x^{pred}_{1}$')
+            plt.plot(X_train_sort, y_final_pred_train[:, 1].detach().numpy(), '.', label=r'$x^{pred}_{2}$')
+            filename = "Training.png"
+
+        plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+        plt.grid(True)
+
         directory = f"/Users/konstantinoskevopoulos/Desktop/Lotka_Volterra_Results/Param1D/IC={IC_predict}, t_end={T_end_test}/"
+
         plt.savefig(directory + filename)
         plt.show()
 
@@ -291,18 +347,33 @@ class ParametricLANDO:
         sort_index = np.squeeze(np.argsort(x_test, axis=0))
         y_test_sort = y_test[sort_index, :]
 
-        y_final_pred = interp_model(torch.from_numpy(X_test_sort).to(torch.float32))
+        if self.rbf:
+            y_final_pred = interp_model(X_test_sort)
+            error_test = self.relative_error(y_test_sort, y_final_pred)
+        else:
+            y_final_pred = interp_model(torch.from_numpy(X_test_sort).to(torch.float32))
+            error_test = self.relative_error(y_test_sort, y_final_pred, tensor=True)
 
         plt.figure(figsize=(11, 5))
         plt.plot(X_test_sort, y_test_sort[:, 0], label=r'$x_1$')
         plt.plot(X_test_sort, y_test_sort[:, 1], label=r'$x_2$')
+
         plt.grid(True)
-        plt.plot(X_test_sort, y_final_pred[:, 0].detach().numpy(), '.', label=r'$x^{pred}_{1}$')
-        plt.plot(X_test_sort, y_final_pred[:, 1].detach().numpy(), '.', label=r'$x^{pred}_{2}$')
+
         plt.xlabel(r'$\mu_1 = \alpha$')
         plt.ylabel(r"$\mathbf{x}$")
+
+        if self.rbf:
+            plt.plot(X_test_sort, y_final_pred[:, 0], '.', label=r'$x^{pred}_{1}$')
+            plt.plot(X_test_sort, y_final_pred[:, 1], '.', label=r'$x^{pred}_{2}$')
+            filename = "Test_RBF.png"
+
+        else:
+            plt.plot(X_test_sort, y_final_pred[:, 0].detach().numpy(), '.', label=r'$x^{pred}_{1}$')
+            plt.plot(X_test_sort, y_final_pred[:, 1].detach().numpy(), '.', label=r'$x^{pred}_{2}$')
+            filename = "Test.png"
+
         plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
-        filename = "Test.png"
         plt.savefig(directory + filename)
         plt.show()
 
@@ -311,6 +382,7 @@ class ParametricLANDO:
         plt.plot(X_test_sort, y_test_sort[:, 1], label=r'$x_2$ Ground Truth')
         plt.plot(X_train_sort, y_train_sort[:, 0], '-.', color='black', label=r'$x_1$ LANDO')
         plt.plot(X_train_sort, y_train_sort[:, 1], '-.', color='black', label=r'$x_2$ LANDO')
+
         plt.ylabel(r"$\mathbf{x}$")
         plt.xlabel(r'$\mu_1 = \alpha$')
         plt.legend(loc='best')
@@ -319,30 +391,35 @@ class ParametricLANDO:
         plt.savefig(directory + filename)
         plt.show()
 
-    @staticmethod
-    def Visual_2D(x_train, y_train, x_test, y_test, test_samples, train_samples, interp_model, lando_error,
+        return error_train, error_test
+
+    def Visual_2D(self, x_train, y_train, x_test, y_test, test_samples, train_samples, interp_model, lando_error,
                   IC_predict, T_end_test):
 
-        y_final_pred = interp_model(torch.from_numpy(x_train).to(torch.float32))
-        train_error = []
-        for row in range(y_train.shape[0]):
-            rel_error_train = np.linalg.norm(y_train[row] - y_final_pred[row].detach().numpy()) / np.linalg.norm(
-                y_train[row])
-            train_error.append(rel_error_train)
+        if self.rbf:
+            y_final_pred_train = interp_model(x_train)
+            train_error = self.relative_error(y_train, y_final_pred_train, mean=False)
 
-        y_final_pred_test = interp_model(torch.from_numpy(x_test).to(torch.float32))
-        test_error = []
-        for row in range(y_test.shape[0]):
-            rel_error_test = np.linalg.norm(y_test[row] - y_final_pred_test[row].detach().numpy()) / np.linalg.norm(
-                y_test[row])
-            test_error.append(rel_error_test)
+            y_final_pred_test = interp_model(torch.from_numpy(x_test).to(torch.float32))
+            test_error = self.relative_error(y_test, y_final_pred_test, mean=False)
+        else:
+            y_final_pred_train = interp_model(torch.from_numpy(x_train).to(torch.float32))
+            train_error = self.relative_error(y_train, y_final_pred_train, mean=False, tensor=True)
+
+            y_final_pred_test = interp_model(torch.from_numpy(x_test).to(torch.float32))
+            test_error = self.relative_error(y_test, y_final_pred_test, mean=False, tensor=True)
 
         directory = f"/Users/konstantinoskevopoulos/Desktop/Lotka_Volterra_Results/Param2D/IC={IC_predict}, t_end={T_end_test}/"
         plt.figure()
         plt.scatter(train_samples[:, 0], train_samples[:, 1], c=train_error, cmap="plasma")
         plt.xlabel(r"$\mu_1$")
         plt.ylabel(r"$\mu_2$")
-        filename = "Training.png"
+
+        if self.rbf:
+            filename = "Training_RBF.png"
+        else:
+            filename = "Training.png"
+
         plt.colorbar(label=r'$L_2$ relative error')
         plt.savefig(directory + filename)
         plt.show()
@@ -351,7 +428,11 @@ class ParametricLANDO:
         plt.scatter(test_samples[:, 0], test_samples[:, 1], c=test_error, cmap="plasma")
         plt.xlabel(r"$\mu_1$")
         plt.ylabel(r"$\mu_2$")
-        filename = "Test.png"
+
+        if self.rbf:
+            filename = "Test_RBF.png"
+        else:
+            filename = "Test.png"
         plt.colorbar(label=r'$L_2$ relative error')
         plt.savefig(directory + filename)
         plt.show()
@@ -364,6 +445,8 @@ class ParametricLANDO:
         plt.colorbar(label=r'LANDO $L_2$ relative error')
         plt.savefig(directory + filename)
         plt.show()
+
+        return np.mean(train_error), np.mean(test_error)
 
     def OfflinePhase(self):
         ### First, the parameters for training are sampled from a latin hypercube
@@ -410,7 +493,7 @@ class ParametricLANDO:
         self.dofs = X.shape[0]
 
         # Compute W tilde and form the model for all the training samples.
-        self.W_tildes = [y_perm @ np.linalg.pinv(self.kernel(Sparse_Dict, scaled_X * x_perm), rcond=1e-7)
+        self.W_tildes = [y_perm @ np.linalg.pinv(self.kernel(Sparse_Dict, scaled_X * x_perm))
                          for y_perm, Sparse_Dict, scaled_X, x_perm in
                          zip(Y_perm_all, self.SparseDicts_all, self.scaled_X_all, X_perm_all)]
 
@@ -456,8 +539,10 @@ class ParametricLANDO:
         pbar = tqdm(total=self.num_samples, desc=f"Online Phase -> Prediction of f(x, t*; mu)...")
         for i, sample in enumerate(self.param_samples):
             ### This is to compare with the predicted value
+
             X, _ = Lotka_Volterra_Snapshot(params=sample, T=T_end_test, num_sensors=self.num_sensors,
                                            x0=IC_predict[0], y0=IC_predict[1])
+
             true_dynamics.append(X)
 
             def Model_General(t, z):
@@ -467,6 +552,7 @@ class ParametricLANDO:
                 """
                 x0, x1 = z
                 x = np.array([[x0], [x1]])
+
                 return (self.W_tildes[i] @ self.kernel(self.SparseDicts_all[i], self.scaled_X_all[i] * x)).flatten()
 
             x_pred = Predict(model=Model_General, Tend=T_end_test, IC=IC_predict,
@@ -492,30 +578,39 @@ class ParametricLANDO:
             ### The prediction is made only for t*
             true_dynamics_test.append(X[:, -1])
 
-        interp_model, x_train, y_train, x_test, y_test, mean_test_error = self.train_fnn(fnn_depth=fnn_depth,
-                                                                                         fnn_width=fnn_width,
-                                                                                         fraction_train=fraction_train,
-                                                                                         lando_dynamics=lando_dynamics,
-                                                                                         num_samples_test=num_samples_test,
-                                                                                         true_dynamics_test=true_dynamics_test,
-                                                                                         epochs=epochs,
-                                                                                         param_samples_test=param_samples_test,
-                                                                                         verbose=verb)
+        if self.rbf:
+            prediction, mean_test_error, interp_model, x_train, y_train, x_test, y_test = self.RBF_Interp(
+                fraction_train=fraction_train,
+                lando_dynamics=lando_dynamics,
+                num_samples_test=num_samples_test,
+                param_samples_test=param_samples_test,
+                true_dynamics_test=true_dynamics_test)
+        else:
+            interp_model, x_train, y_train, x_test, y_test, mean_test_error = self.train_fnn(fnn_depth=fnn_depth,
+                                                                                             fnn_width=fnn_width,
+                                                                                             fraction_train=fraction_train,
+                                                                                             lando_dynamics=lando_dynamics,
+                                                                                             num_samples_test=num_samples_test,
+                                                                                             true_dynamics_test=true_dynamics_test,
+                                                                                             epochs=epochs,
+                                                                                             param_samples_test=param_samples_test,
+                                                                                             verbose=verb)
         if self.num_params_varied == 1:
-            self.Visual_1D(x_train=x_train, y_train=y_train, x_test=x_test, y_test=y_test,
-                           interp_model=interp_model, IC_predict=IC_predict, T_end_test=T_end_test)
+
+            mean_train_error, mean_test_error = self.Visual_1D(x_train=x_train, y_train=y_train, x_test=x_test,
+                                                               y_test=y_test,
+                                                               interp_model=interp_model, IC_predict=IC_predict,
+                                                               T_end_test=T_end_test)
         else:
 
             test_samples = param_samples_lh_test
             train_samples = self.param_samples[:int(fraction_train * self.num_samples), :self.num_params_varied]
             lando_error = reconstruction_relative_errors[:int(fraction_train * self.num_samples)]
 
-            self.Visual_2D(x_train=x_train, x_test=x_test, y_train=y_train, y_test=y_test,
-                           interp_model=interp_model, test_samples=test_samples,
-                           train_samples=train_samples, lando_error=lando_error,
-                           IC_predict=IC_predict, T_end_test=T_end_test)
+            mean_train_error, mean_test_error = self.Visual_2D(x_train=x_train, x_test=x_test, y_train=y_train,
+                                                               y_test=y_test,
+                                                               interp_model=interp_model, test_samples=test_samples,
+                                                               train_samples=train_samples, lando_error=lando_error,
+                                                               IC_predict=IC_predict, T_end_test=T_end_test)
 
-        return mean_test_error
-
-
-
+        return mean_train_error, mean_test_error

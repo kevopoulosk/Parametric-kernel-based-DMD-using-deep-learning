@@ -16,7 +16,7 @@ def extract_vertices(directory_to_txt):
     v_num = int(words[0])
     l_num = int(np.ceil(v_num/5))
     TargetMSH.close()
-    print('TOTAL VERTICES:', v_num)
+    # print('TOTAL VERTICES:', v_num)
 
     ### Create a list and copy out all the boundary vertices
     VerticeList = []
@@ -47,7 +47,7 @@ def vertices_num(directory_to_txt):
 ### Collecting data generated from FreeFem
 DirectoryData = "/Users/konstantinoskevopoulos/Documents/Heat_Eq_Thesis/SnapshotData"
 DirectoryProcessed = "/Users/konstantinoskevopoulos/Documents/Heat_Eq_Thesis/SnapshotData_Processed"
-SampleSize = 500
+SampleSize = 300
 T_end = 5
 dt = 0.01
 t_span = np.linspace(dt, T_end, int(T_end/dt))
@@ -55,8 +55,9 @@ t_span = np.linspace(dt, T_end, int(T_end/dt))
 v_num = vertices_num(DirectoryData+'/mu0/t=0.01.txt')
 snapshots = []
 
-pbar = tqdm(position=0, leave=True, total=SampleSize, desc="Preprocessing of samples")
+pbar = tqdm(position=0, leave=True, total=SampleSize, desc="Preprocessing of samples...")
 for i in range(SampleSize):
+
     c_list = np.empty((v_num, 0))
     num = 0
     for t in t_span:
@@ -66,7 +67,7 @@ for i in range(SampleSize):
         elif num % 10 == 0:
             c = extract_vertices(DirectoryData+f"/mu{i}/t={'{0:.1f}'.format(t)}.txt")
         else:
-            c = extract_vertices(DirectoryData + f"/mu{i}/t={'{0:.2f}'.format(t)}.txt")
+            c = extract_vertices(DirectoryData+f"/mu{i}/t={'{0:.2f}'.format(t)}.txt")
         c_list = np.hstack((c_list, c))
 
     snapshots.append(c_list)
