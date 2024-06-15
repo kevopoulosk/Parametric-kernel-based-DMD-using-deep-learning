@@ -1,5 +1,5 @@
 ### This file generates the parametric samples for the heat problem.
-### Currently, the samples are collcted from a latin hypercube, this will change with the adaprive sampling technique
+### The samples are collcted from a latin hypercube
 
 
 import numpy as np

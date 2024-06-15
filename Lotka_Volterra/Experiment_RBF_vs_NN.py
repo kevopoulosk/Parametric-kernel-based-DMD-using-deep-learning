@@ -4,6 +4,12 @@ import matplotlib.pyplot as plt
 
 
 def RBF_vs_NN_Visual(train_instances, test_instances):
+    """
+    Function that visualizes the results of the generalization and test performance of RBF and NN
+    :param train_instances:
+    :param test_instances:
+    :return:
+    """
     labels = ("RBF\nIC=[70, 20]", "NN\nIC=[70, 20]", "RBF\nIC=[80, 20]", "NN\nIC=[80, 20]")
     means = {
         'Train': (train_instances),

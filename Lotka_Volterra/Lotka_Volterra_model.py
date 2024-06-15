@@ -2,7 +2,6 @@ import numpy as np
 from scipy.integrate import solve_ivp
 
 
-# @njit
 def Lotka_Volterra(alpha, beta, gamma, delta, T, x0, y0, num_sensors):
     """
     Function that numerically integrates the coupled ODEs that comprise the Lotka-Volterra model
@@ -37,6 +36,15 @@ def Lotka_Volterra(alpha, beta, gamma, delta, T, x0, y0, num_sensors):
 
 
 def Lotka_Volterra_Snapshot(params, T=400, x0=80, y0=20, num_sensors=300):
+    """
+    Function that generates the snapshot matrix for the Lotka-Volterra model
+    :param params: parameters of the system (alpha, beta, gamma, delta)
+    :param T: Time horizon of the simulation
+    :param x0: Initial condition
+    :param y0: Initial condition
+    :param num_sensors: Number of sensors for the discretization of the solution
+    :return:
+    """
 
     X = np.zeros((num_sensors, 2))
 

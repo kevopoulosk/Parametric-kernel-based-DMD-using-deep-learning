@@ -48,8 +48,7 @@ for init in Init_Conditions:
         except:
             print('Sth went wrong, please check')
 
-        mean_error_train, mean_error_test = parametric_lando.OnlinePhase(num_samples_test=NumSamples_Test,
-                                                                         T_end_test=t,
+        mean_error_train, mean_error_test = parametric_lando.OnlinePhase(T_end_test=t,
                                                                          fraction_train=train_frac,
                                                                          fnn_depth=depth, fnn_width=width,
                                                                          epochs=epochs, IC_predict=init, verb=False)

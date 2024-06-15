@@ -8,6 +8,11 @@ from tqdm import tqdm
 
 
 def extract_vertices(directory_to_txt):
+    """
+    Function used to extract the vertices of the FEM mesh
+    :param directory_to_txt: directory that contains the information about the vertices of the FEM mesh.
+    :return:
+    """
     TargetMSH = open(directory_to_txt, "r+")
 
     ### Read the total number of vertices(points) from .msh file
@@ -34,6 +39,11 @@ def extract_vertices(directory_to_txt):
 
 
 def vertices_num(directory_to_txt):
+    """
+    Function used to determine the number of vertices of the FEM mesh.
+    :param directory_to_txt:
+    :return:
+    """
     TargetMSH = open(directory_to_txt, "r+")
 
     ### Read the total number of vertices(points) from .msh file

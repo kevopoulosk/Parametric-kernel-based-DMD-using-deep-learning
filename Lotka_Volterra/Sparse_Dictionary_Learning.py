@@ -20,13 +20,19 @@ def Permute(X):
 
 
 def Scale(X):
+    """
+    Functuon used to rescale the dictionary. This is used to enhance the numerical conditioning of the dictionary
+    :param X: The dictionary
+    :return:
+    """
     return 1/np.max(np.abs(X), axis=1).reshape(-1, 1)
 
 
-def SparseDictionary(SnapMat, scale, kernel, tolerance, pbar_bool=True, al_sampling=False):
+def SparseDictionary(SnapMat, scale, kernel, tolerance, pbar_bool=True):
     """
     Function that generates the sparse dictionary
     :param SnapMat: The permuted snapshot matrix X
+    :param scale: The scaled used to multiply the dictionary
     :param kernel: The kernel function used. Could be linear, quadratic, RBF etc.
     :param tolerance: The sparsity parameter. Increase this value for a more sparse dictionary and vice versa
     :param pbar_bool: Whether or not to print a progress bar.
@@ -85,11 +91,9 @@ def SparseDictionary(SnapMat, scale, kernel, tolerance, pbar_bool=True, al_sampl
     if pbar_bool:
         pbar.close()
 
-    ### Return different things if we perform active learning
-    if al_sampling:
-        return sparse_dict, C, k_tt, k_tilde_prev, st, m
-    else:
-        return sparse_dict, SnapMat, C, idx, delta_vals
+    return sparse_dict
+
+### Implementation of several kernels used in this work
 
 
 def quadratic_kernel(u, v, c=0.1, d=2, slope=1):
@@ -152,6 +156,3 @@ def Predict(model, Tend, IC, dt=None, comp=None, sensors=300, type="Cont"):
 
         return out_mat
 
-
-def kernel_cosine_sim(u, v):
-    return (u.T @ v)/(np.linalg.norm(u)*np.linalg.norm(v))

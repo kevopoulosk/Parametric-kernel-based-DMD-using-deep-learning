@@ -11,7 +11,7 @@ sensors = 600
 sparsity_lando = 1e-6
 
 NumSamples_Test = 500
-train_frac = 0.8
+train_frac = 0.15
 depth = 3
 width = 32
 epochs = 35000
@@ -25,7 +25,7 @@ fixed_params = np.array([0.002, 0.2, 0.0025])
 T_tests = np.arange(50, 650, 50)
 Init_Conditions = [[70, 20], [80, 20]]
 
-save_directory = "/Users/konstantinoskevopoulos/Desktop/Lotka_Volterra_Results/Param1D"
+save_directory = "/Users/konstantinoskevopoulos/Desktop/Lotka_Volterra_Results_Alternative/Param1D"
 
 parametric_lando = ParametricLANDO(kernel=quadratic_kernel, horizon_train=T_train, num_samples_train=NumSamples_Train,
                                    num_sensors=sensors, sparsity_tol=sparsity_lando, batch_frac=0.2,
@@ -49,11 +49,17 @@ for init in Init_Conditions:
         except:
             print('Sth went wrong, please check')
 
-        mean_error_train, mean_error_test = parametric_lando.OnlinePhase(num_samples_test=NumSamples_Test,
-                                                                         T_end_test=t,
-                                                                         fraction_train=train_frac,
-                                                                         fnn_depth=depth, fnn_width=width,
-                                                                         epochs=epochs, IC_predict=init, verb=False)
+        interp_model, X_train, y_train, X_valid, y_valid, _, _, reconstruct_rel_errs = parametric_lando.OnlinePhase(
+            T_end_test=t,
+            fraction_train=train_frac,
+            fnn_depth=depth, fnn_width=width,
+            epochs=epochs, IC_predict=init, verb=True)
+
+        mean_error_train, mean_error_test = parametric_lando.TestPhase(num_samples_test=NumSamples_Test,
+                                                                       interp_model=interp_model,
+                                                                       reconstruction_relative_errors=reconstruct_rel_errs,
+                                                                       x_train=X_train,
+                                                                       y_train=y_train)
 
         dict_errors[f"IC={init}"].append(mean_error_test)
         dict_errors_general[f"IC={init}"].append([mean_error_train, mean_error_test])
@@ -70,11 +76,9 @@ else:
     with open('errors_dict_1D_NN.pkl', 'wb') as f:
         pickle.dump(dict_errors_general, f)
 
-
 ### Visualise the different errors
 initial_conditions = list(dict_errors.keys())
 errors = list(dict_errors.values())
-
 
 for i in range(len(initial_conditions)):
     plt.semilogy(T_tests, errors[i], '-o', label=initial_conditions[i])
