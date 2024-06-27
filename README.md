@@ -1,5 +1,9 @@
 # Kernel-based parametric dynamic mode decomposition with active learning 
 
+![alt text]([](https://github.com/kevopoulosk/MSc_Thesis_Kernel_based_parametric_DMD_with_Active_Learning/blob/main/github_figure.png)?raw=true)
+
+
+
 This repository contains the methods and techniques implemented in the context of the thesis
 research project of MSc in Computational Science at the University of Amsterdam & University of Twente.
 
