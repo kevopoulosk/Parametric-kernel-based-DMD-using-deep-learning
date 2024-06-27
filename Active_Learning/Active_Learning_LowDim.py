@@ -55,7 +55,7 @@ class FNN(nn.Module):
             layers.append(nn.Linear(in_features=self.Width, out_features=self.Width))
             layers.append(self.Activation)
 
-        layers.append(nn.Linear(in_features=self.Width, out_features= self.NumOutput))
+        layers.append(nn.Linear(in_features=self.Width, out_features=self.NumOutput))
 
         self.fnn_stack = nn.Sequential(*layers)
         self.b = torch.nn.parameter.Parameter(torch.zeros(self.NumOutput))
@@ -250,7 +250,7 @@ class Ensemble_NN:
         ### Now the parameters "theta" of all the ensemble members have been learned
         ### Also for the mean valid errors
         nets_evaluated_valid = [neural_net(torch.tensor(X_valid_sort, dtype=torch.float32))
-                          for neural_net in ensemble_members]
+                                for neural_net in ensemble_members]
 
         valid_errors = [self.relative_error(y_valid, nets_evaluated_valid[i], tensor=True) for i in
                         range(len(nets_evaluated_valid))]
@@ -305,7 +305,7 @@ def LatinHypercube(dim_sample, low_bounds, upp_bounds, num_samples):
     return sample_params
 
 
-def ActiveLearning_Algorithm(num_init, pLANDO, n_all, dim_init,low_init, upp_init, num_valid,
+def ActiveLearning_Algorithm(num_init, pLANDO, n_all, dim_init, low_init, upp_init, num_valid,
                              onlinephase_args, ensemble_args):
     """
        Function that implements the active learning algorithm used in this work
@@ -346,7 +346,8 @@ def ActiveLearning_Algorithm(num_init, pLANDO, n_all, dim_init,low_init, upp_ini
             y_init = y_train
 
         ### Train the Ensemble NN
-        new_sample, mean, var, train_err, valid_err, ensemble_nets = ensemble.EnsembleTraining(X_train, y_train, X_valid, y_valid)
+        new_sample, mean, var, train_err, valid_err, ensemble_nets = ensemble.EnsembleTraining(X_train, y_train,
+                                                                                               X_valid, y_valid)
         adaptive_samples.append(new_sample)
         ensemble_means.append(mean)
         ensemble_vars.append(var)
@@ -367,19 +368,37 @@ def ActiveLearning_Algorithm(num_init, pLANDO, n_all, dim_init,low_init, upp_ini
     y_adaptive = np.mean(y_adaptive_means, axis=0)
 
     X_valid_sort = np.sort(X_valid, axis=0)
+    sort_index = np.squeeze(np.argsort(X_valid, axis=0))
+    y_valid_sort = y_valid[sort_index, :]
 
     plt.figure()
     plt.plot(X_init, y_init, 'o', label='Initial samples')
     plt.fill_between(X_valid_sort.reshape(-1), ensemble_means[-1][:, 0] - np.sqrt(ensemble_vars[-1]),
-                     ensemble_means[-1][:, 0] + np.sqrt(ensemble_vars[-1]), alpha=0.3, label=r'$\pm  \sigma(\mu)$')
+                     ensemble_means[-1][:, 0] + np.sqrt(ensemble_vars[-1]), alpha=0.2,
+                     label=r'$x^{pred}_{1} \pm  \sigma(\mu)$')
     plt.fill_between(X_valid_sort.reshape(-1), ensemble_means[-1][:, 1] - np.sqrt(ensemble_vars[-1]),
-                     ensemble_means[-1][:, 1] + np.sqrt(ensemble_vars[-1]), alpha=0.3, label=r'$\pm  \sigma(\mu)$')
+                     ensemble_means[-1][:, 1] + np.sqrt(ensemble_vars[-1]), alpha=0.2,
+                     label=r'$x^{pred}_{2}m\pm  \sigma(\mu)$')
     plt.plot(adaptive_samples, y_adaptive[:, 0], 'x', color='black', label=r'$max(\sigma^2(\mu))$')
     plt.plot(adaptive_samples, y_adaptive[:, 1], 'x', color='black')
     plt.xlabel(r"$\mu_1 = \alpha$")
     plt.ylabel(r"$\mathbf{x}$")
     plt.legend(loc='upper left', bbox_to_anchor=(0, 1.18), ncols=3)
     plt.savefig(directory + "plot_final")
+
+    plt.figure()
+    plt.fill_between(X_valid_sort.reshape(-1), ensemble_means[-1][:, 0] - np.sqrt(ensemble_vars[-1]),
+                     ensemble_means[-1][:, 0] + np.sqrt(ensemble_vars[-1]), alpha=0.2,
+                     label=r'$x^{pred}_{1}(\mu) \pm  \sigma(\mu)$', color='blue')
+    plt.fill_between(X_valid_sort.reshape(-1), ensemble_means[-1][:, 1] - np.sqrt(ensemble_vars[-1]),
+                     ensemble_means[-1][:, 1] + np.sqrt(ensemble_vars[-1]), alpha=0.2,
+                     label=r'$x^{pred}_{2}(\mu) \pm  \sigma(\mu)$', color='orange')
+    plt.plot(X_valid_sort, y_valid_sort[:, 0], label=r'$x_1$', color='blue')
+    plt.plot(X_valid_sort, y_valid_sort[:, 1], label=r'$x_2$', color='orange')
+    plt.xlabel(r"$\mu_1 = \alpha$")
+    plt.ylabel(r"$\mathbf{x}$")
+    plt.legend(loc='upper left', bbox_to_anchor=(0, 1.18), ncols=2)
+    plt.savefig(directory + "reference_vs_al")
 
     ### Visualise training and test errors through the active learning simulation
     plt.figure()
@@ -404,16 +423,9 @@ def ActiveLearning_Algorithm(num_init, pLANDO, n_all, dim_init,low_init, upp_ini
 
 
 def GenerateSnapshot(system, new_point, t_test, IC, sensors, fixed_parameters=None):
-
     if system == "LV":
         parameters = np.hstack((new_point, fixed_parameters))
         X, _ = Lotka_Volterra_Snapshot(parameters, T=t_test, x0=IC[0], y0=IC[1], num_sensors=sensors)
         X_t_test = X[:, -1]
 
         return X_t_test
-
-
-
-
-
-

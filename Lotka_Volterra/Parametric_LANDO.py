@@ -137,6 +137,7 @@ class ParametricLANDO:
         self.active = sampling_al
         self.after_active = after_al
 
+
     @staticmethod
     def relative_error(y_test, prediction, tensor=False, mean=True):
         err_list = []
@@ -183,7 +184,7 @@ class ParametricLANDO:
 
         return rbf_function, X_train, y_train, relative_error_train
 
-    def train_fnn(self, fnn_depth, fnn_width, fraction_train, lando_dynamics, epochs, verbose=True):
+    def train_fnn(self, fnn_depth, fnn_width, fraction_train, lando_dynamics, epochs, verbose=True, true_dynamics=None):
 
         ### Split the parametric samples into training and validation data
         if self.active:
@@ -194,12 +195,10 @@ class ParametricLANDO:
             ### Number of samples for validation
             ValidSamples = self.param_samples.shape[0] - TrainSamples
 
-        if self.num_params_varied > 1:
-            scaler = preprocessing.MaxAbsScaler()
-
         ### If 1+ parameters are varied, then they are scaled to the range (0, 1).
         ### This scaling enhances the performance of the NN interpolator
         if self.num_params_varied > 1:
+            scaler = preprocessing.MaxAbsScaler()
             X_train = scaler.fit_transform(self.param_samples[:TrainSamples, :self.num_params_varied])
             X_valid = scaler.fit_transform(self.param_samples[TrainSamples:, :self.num_params_varied])
         else:
@@ -311,6 +310,8 @@ class ParametricLANDO:
             prediction_valid = Mapping_FNN(torch.from_numpy(X_valid).to(torch.float32))
             mean_relative_error_valid = self.relative_error(y_test=y_valid, prediction=prediction_valid,
                                                             tensor=True, mean=False)
+            if self.active:
+                y_valid = np.vstack([true_dynamics[TrainSamples:][i][:, -1] for i in range(ValidSamples)])
 
         return Mapping_FNN, X_train, y_train, X_valid, y_valid, mean_relative_error_train, mean_relative_error_valid
 
@@ -600,7 +601,8 @@ class ParametricLANDO:
                 fraction_train=self.train_frac,
                 lando_dynamics=lando_dynamics,
                 epochs=epochs,
-                verbose=verb)
+                verbose=verb,
+                true_dynamics=true_dynamics)
 
         return interp_model, X_train, y_train, X_valid, y_valid, rel_err_train, rel_err_valid, reconstruction_relative_errors
 
