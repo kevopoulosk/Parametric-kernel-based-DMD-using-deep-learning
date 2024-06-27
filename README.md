@@ -11,7 +11,7 @@ research project of MSc in Computational Science at the University of Amsterdam.
 
 
 In this work, a non-intrusive parametric surrogate model is presented, able to provide
-temporal predictions for systems characterized by high state dimension and nonlinear
+temporal and parametric predictions for systems characterized by high state dimension and nonlinear
 behavior. In detail, a parametrization algorithm is developed to extend the kernel-based
 LANDO framework (Baddoo et al., [2022](https://royalsocietypublishing.org/doi/full/10.1098/rspa.2021.0830)) to a parametric format (pLANDO) using regression techniques. 
 Additionally, an adaptive sampling technique based on deep ensemble
