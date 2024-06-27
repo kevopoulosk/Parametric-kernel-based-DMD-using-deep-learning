@@ -24,7 +24,7 @@ three numerical problems with nonlinear behavior; namely the Lotka-Volterra mode
 
 ## Experiments
 
-Several experiments are performed, regarding the application of pLANDO in the three aforementioned numerical problem. 
+Several experiments are performed, regarding the application of pLANDO in the three aforementioned numerical problems. 
 Additionally, we perform experiments to test the efficiency of the developed active learning technique. 
 
 ### Lotka-Volterra model
@@ -41,7 +41,7 @@ To perform active learning in this system, the `Experiments_ActiveLearning.py` f
 ### Heat Equation 
 
 The snapshot data for the pLANDO training in this case are generated with the finite element method (FEM). 
-The implementation of the finite element simulation is based on open source [FreeFEM](https://freefem.org/) software. 
+The implementation of the finite element simulation is based on the open source software [FreeFEM](https://freefem.org/). 
 
 To generate the numerical data, please run the `Data_Generation.py`, `Heat_problem_thesis.edp`, and `Data_Preprocessing.py` files in that order. 
 Subsequently, pLANDO can be employed to approximate the parametric dynamics of this system with the `Experiments_DiffTimes.py` file. 
@@ -59,6 +59,6 @@ Additionally, to explore the 2D parameter space using adaptive sampling, the `Ex
 
 
 ### Important Notes:
-* In order to run the aforementioned files, please change the names of the directories, to save the results and figures in your local device.
+* In order to run the aforementioned files, please change the names of the directories in the code, to save the results and figures in your local device.
 * Note that FEM simulation for data generation of the heat equation, and the active learning experiments are computationally expensive. Running these files might take a long time
 
