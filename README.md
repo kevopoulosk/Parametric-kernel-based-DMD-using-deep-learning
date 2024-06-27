@@ -4,6 +4,9 @@ This repository contains the methods and techniques implemented in the context o
 research project of MSc in Computational Science at the University of Amsterdam & University of Twente.
 
 
+
+
+
 In this work, a non-intrusive parametric surrogate model is presented, able to provide
 temporal predictions for systems characterized by high state dimension and nonlinear
 behavior. In detail, a parametrization algorithm is developed to extend the kernel-based
@@ -15,3 +18,17 @@ of the proposed parametric surrogate model in predicting the parametric dynamics
 three numerical problems with nonlinear behavior; namely the Lotka-Volterra model, a
 2D heat equation, and the Allen-Cahn equation
 
+
+## Experiments
+
+Several experiments are performed, regarding the application of pLANDO in the three aforementioned numerical problem. 
+Additionally, we perform experiments to test the efficiency of the developed active learning technique. 
+
+### Lotka-Volterra model
+To perform the experiments regarding the application of pLANDO in the Lotka-Volterra model, the following python files should be run:
+
+* '\texttt{Experiments_1D.py}' (The parameter space is one-dimensional)
+* '\texttt{Experiments_2D.py}' (The parameter space is two-dimensional)
+* '\texttt{Experiment_RBF_vs_NN.py}' (Compare the performance of different regression techniques)
+
+To perform active learning in this system, the '\texttt{Experiments_ActiveLearning.py}' file should be run.
