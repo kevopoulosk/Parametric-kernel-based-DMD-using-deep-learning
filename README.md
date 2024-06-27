@@ -1,6 +1,9 @@
 # Kernel-based parametric dynamic mode decomposition with active learning 
 
-![alt text]([](https://github.com/kevopoulosk/MSc_Thesis_Kernel_based_parametric_DMD_with_Active_Learning/blob/main/github_figure.png)?raw=true)
+
+![github_figure](https://github.com/kevopoulosk/MSc_Thesis_Kernel_based_parametric_DMD_with_Active_Learning/assets/113594011/b3a3eb4f-586a-4b44-9a41-3883431d51ff)
+
+
 
 
 
