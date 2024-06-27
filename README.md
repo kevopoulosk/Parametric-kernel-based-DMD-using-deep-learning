@@ -32,3 +32,30 @@ To perform the experiments regarding the application of pLANDO in the Lotka-Volt
 * `Experiment_RBF_vs_NN.py` (Compare the performance of different regression techniques)
 
 To perform active learning in this system, the `Experiments_ActiveLearning.py` file should be run.
+
+
+
+### Heat Equation 
+
+The snapshot data for the pLANDO training in this case are generated with the finite element method (FEM). 
+The implementation of the finite element simulation is based on open source [FreeFEM](https://freefem.org/) software. 
+
+To generate the numerical data, please run the `Data_Generation.py`, `Heat_problem_thesis.edp`, and `Data_Preprocessing.py` files in that order. 
+Subsequently, pLANDO can be employed to approximate the parametric dynamics of this system with the `Experiments_DiffTimes.py` file. 
+As a last step, run the `Visualization.edp` file to obtain the .vtk visualisations of the reference solutions, predicted solutions, and prediction errors of pLANDO for several parametric instances. 
+
+
+
+### Allen-Cahn equation
+
+To generate the snapshot data, run the `Data_Generation.py`. 
+To obtain results from the application of pLANDO in this system, run the `Experiments_DiffTimes.py`, in the folder of the Allen-Cahn equation. 
+Additionally, to explore the 2D parameter space using adaptive sampling, the `Experiments_ActiveLearning.py` should be run.
+
+
+
+
+### Important Notes:
+* In order to run the aforementioned files, please change the names of the directories, to save the results and figures in your local device.
+* Note that FEM simulation for data generation of the heat equation, and the active learning experiments are computationally expensive. Running these files might take a long time
+
