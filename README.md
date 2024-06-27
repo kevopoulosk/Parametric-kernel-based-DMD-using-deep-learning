@@ -27,8 +27,8 @@ Additionally, we perform experiments to test the efficiency of the developed act
 ### Lotka-Volterra model
 To perform the experiments regarding the application of pLANDO in the Lotka-Volterra model, the following python files should be run:
 
-* '\texttt{Experiments_1D.py}' (The parameter space is one-dimensional)
-* '\texttt{Experiments_2D.py}' (The parameter space is two-dimensional)
-* '\texttt{Experiment_RBF_vs_NN.py}' (Compare the performance of different regression techniques)
+* `Experiments_1D.py` (The parameter space is one-dimensional)
+* `Experiments_2D.py` (The parameter space is two-dimensional)
+* `Experiment_RBF_vs_NN.py` (Compare the performance of different regression techniques)
 
-To perform active learning in this system, the '\texttt{Experiments_ActiveLearning.py}' file should be run.
+To perform active learning in this system, the `Experiments_ActiveLearning.py` file should be run.
