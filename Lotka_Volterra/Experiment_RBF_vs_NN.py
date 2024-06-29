@@ -39,7 +39,7 @@ def RBF_vs_NN_Visual(train_instances, test_instances):
     plt.show()
 
 
-cases = ["1D", "2D"]
+cases = ["2D"]
 interp = ["RBF", "NN"]
 IC = [[70, 20], [80, 20]]
 
