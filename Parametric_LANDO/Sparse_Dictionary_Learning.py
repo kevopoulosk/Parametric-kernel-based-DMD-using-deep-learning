@@ -1,6 +1,6 @@
 from numba import njit
+import numpy as np
 from tqdm import tqdm
-from Lotka_Volterra.Lotka_Volterra_Deriv import *
 from scipy.integrate import solve_ivp
 
 

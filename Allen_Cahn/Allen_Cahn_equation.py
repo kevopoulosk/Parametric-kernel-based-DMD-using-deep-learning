@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
 
-def Allen_Cahn_eq(D, a, L=2.0, T=1.0, nx=250, nt=1000, plot=False):
+def Allen_Cahn_eq(D, a, L=2.0, T=1, nx=250, nt=1000, plot=False):
     """
     Function that implements the discretization of the Allen-Cahn equation
     This is used for the numerical solution of the PDE. The finite differencing method is used.

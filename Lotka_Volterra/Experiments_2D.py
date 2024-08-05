@@ -1,4 +1,4 @@
-from Parametric_LANDO import *
+from Sparse_Dictionary_Learning.pLANDO_LowDim import *
 import os
 import pickle
 

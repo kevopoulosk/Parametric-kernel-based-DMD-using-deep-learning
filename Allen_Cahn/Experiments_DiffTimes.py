@@ -1,4 +1,4 @@
-from Heat_Equation.HighDim_pLANDO import *
+from Sparse_Dictionary_Learning.pLANDO_HighDim import *
 import pickle
 
 test_t_instances = [0.05, 0.17, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85, 0.97]

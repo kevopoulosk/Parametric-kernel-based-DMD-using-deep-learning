@@ -1,4 +1,4 @@
-from HighDim_pLANDO import *
+from Sparse_Dictionary_Learning.pLANDO_HighDim import *
 import pickle
 
 test_t_instances = [0.15, 0.45, 1, 1.5, 2, 2.5, 3, 3.5, 4]

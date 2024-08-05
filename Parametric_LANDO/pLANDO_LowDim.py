@@ -1,14 +1,13 @@
 import matplotlib.pyplot as plt
-import numpy as np
 from scipy.stats import qmc
-from Lotka_Volterra.Lotka_Volterra_model import *
-from Lotka_Volterra.Sparse_Dictionary_Learning import *
+from Parametric_LANDO.Sparse_Dictionary_Learning import *
 from torch.utils.data import DataLoader
 from sklearn import preprocessing
 import torch.utils.data as data
 import torch
 from torch import nn
 from scipy.interpolate import RBFInterpolator
+from tqdm import tqdm
 
 
 class Snake(nn.Module):
@@ -88,7 +87,6 @@ class Data(data.Dataset):
 def LatinHypercube(dim_sample, low_bounds, upp_bounds, num_samples):
     """
     Function that is used to sample the parameters from a latin hypercube.
-    Later, the active learning/adaptive sampling technique will be used instead.
     :param dim_sample: The dimension that we sample
     :param low_bounds: lower bound of the sampling interval
     :param upp_bounds: upper bound of the sampling interval
@@ -107,7 +105,7 @@ def LatinHypercube(dim_sample, low_bounds, upp_bounds, num_samples):
 class ParametricLANDO:
 
     def __init__(self, kernel, horizon_train, sparsity_tol, num_samples_train, num_sensors, batch_frac, params_varied,
-                 low_bound, upp_bound, fixed_params_val, rbf=False, sampling_al=False, after_al=False):
+                 low_bound, upp_bound, fixed_params_val, generate_snapshot, generate_deriv, rbf=False):
         """
         Class that implements the parametric form of the LANDO framework.
         :param kernel: The chosen kernel. For instance this be linear, quadratic or gaussian. For this Lotka-Volterra
@@ -134,9 +132,8 @@ class ParametricLANDO:
         self.upp_bounds = upp_bound
         self.params_fixed = fixed_params_val
         self.rbf = rbf
-        self.active = sampling_al
-        self.after_active = after_al
-
+        self.X_Snapshot = generate_snapshot
+        self.Y_Deriv = generate_deriv
 
     @staticmethod
     def relative_error(y_test, prediction, tensor=False, mean=True):
@@ -187,13 +184,9 @@ class ParametricLANDO:
     def train_fnn(self, fnn_depth, fnn_width, fraction_train, lando_dynamics, epochs, verbose=True, true_dynamics=None):
 
         ### Split the parametric samples into training and validation data
-        if self.active:
-            TrainSamples = self.param_samples_al.shape[0]
-            ValidSamples = self.valid_samples.shape[0]
-        else:
-            TrainSamples = int(self.param_samples.shape[0] * fraction_train)
-            ### Number of samples for validation
-            ValidSamples = self.param_samples.shape[0] - TrainSamples
+        TrainSamples = int(self.param_samples.shape[0] * fraction_train)
+        ### Number of samples for validation
+        ValidSamples = self.param_samples.shape[0] - TrainSamples
 
         ### If 1+ parameters are varied, then they are scaled to the range (0, 1).
         ### This scaling enhances the performance of the NN interpolator
@@ -208,110 +201,101 @@ class ParametricLANDO:
         y_train = np.vstack([lando_dynamics[:TrainSamples][i][:, -1] for i in range(TrainSamples)])
         y_valid = np.vstack([lando_dynamics[TrainSamples:][i][:, -1] for i in range(ValidSamples)])
 
-        ### Set these to None for the active learning case
-        Mapping_FNN = None
-        mean_relative_error_train = None
-        mean_relative_error_valid = None
+        ### Set up the neural network to learn the mapping
+        Mapping_FNN = FNN(num_input=self.num_params_varied, num_output=self.dofs, depth=fnn_depth, width=fnn_width)
 
-        ### Only perform the NN training when we don't do active learning, or after the active learning
-        if self.after_active:
-            ### Set up the neural network to learn the mapping
-            Mapping_FNN = FNN(num_input=self.num_params_varied, num_output=self.dofs, depth=fnn_depth, width=fnn_width)
+        optimizer = torch.optim.Adam(Mapping_FNN.parameters(), lr=1e-3)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.04, patience=3)
+        loss_criterion = torch.nn.MSELoss()
 
-            optimizer = torch.optim.Adam(Mapping_FNN.parameters(), lr=1e-3)
-            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.04, patience=3)
-            loss_criterion = torch.nn.MSELoss()
+        dataset_train = Data(X=X_train, y=y_train)
+        dataset_valid = Data(X=X_valid, y=y_valid)
 
-            dataset_train = Data(X=X_train, y=y_train)
-            dataset_valid = Data(X=X_valid, y=y_valid)
+        train_loader = DataLoader(dataset=dataset_train, batch_size=int(TrainSamples * self.batch_size_frac))
+        valid_loader = DataLoader(dataset=dataset_valid, batch_size=int(ValidSamples * self.batch_size_frac))
 
-            train_loader = DataLoader(dataset=dataset_train, batch_size=int(TrainSamples * self.batch_size_frac))
-            valid_loader = DataLoader(dataset=dataset_valid, batch_size=int(ValidSamples * self.batch_size_frac))
+        loss_epochs = []
+        valid_errors = []
+        best_val_loss = float('inf')
+        best_model_weights = None
 
-            loss_epochs = []
-            valid_errors = []
-            best_val_loss = float('inf')
-            best_model_weights = None
+        if verbose:
+            pbar = tqdm(total=epochs, desc="Epochs training...")
+        for epoch in range(epochs):
+            # Training Phase
+            Mapping_FNN.train(True)
+            relative_error_train = []
+            relative_error_valid = []
+            for x, y in train_loader:
+                optimizer.zero_grad()
+                y_pred = Mapping_FNN(x)
+                loss = loss_criterion(y_pred, y)
+                loss.backward()
+                optimizer.step()
 
-            if verbose:
-                pbar = tqdm(total=epochs, desc="Epochs training...")
-            for epoch in range(epochs):
-                # Training Phase
-                Mapping_FNN.train(True)
-                relative_error_train = []
-                relative_error_valid = []
-                for x, y in train_loader:
-                    optimizer.zero_grad()
-                    y_pred = Mapping_FNN(x)
-                    loss = loss_criterion(y_pred, y)
-                    loss.backward()
-                    optimizer.step()
+                ### Mean relative error of the batch
+                relative_error_train.append(
+                    np.linalg.norm(y.detach().numpy() - y_pred.detach().numpy()) / np.linalg.norm(
+                        y.detach().numpy()))
 
-                    ### Mean relative error of the batch
-                    relative_error_train.append(
-                        np.linalg.norm(y.detach().numpy() - y_pred.detach().numpy()) / np.linalg.norm(
-                            y.detach().numpy()))
+            # Mean relative error of the epoch
+            loss_epoch = np.mean(relative_error_train)
+            loss_epochs.append(loss_epoch)
 
-                # Mean relative error of the epoch
-                loss_epoch = np.mean(relative_error_train)
-                loss_epochs.append(loss_epoch)
-
-                # Validation Phase
-                Mapping_FNN.eval()
-                with torch.no_grad():
-                    for x_val, y_val in valid_loader:
-                        y_val_pred = Mapping_FNN(x_val)
-                        relative_error_valid.append(np.linalg.norm(y_val.detach().numpy() - y_val_pred.detach().numpy())
-                                                    / np.linalg.norm(y_val.detach().numpy()))
-
-                    mean_relative_err_val = np.mean(relative_error_valid)
-                valid_errors.append(mean_relative_err_val)
-
-                ### Keep track of the model that results to the minimum validation error
-                if mean_relative_err_val < best_val_loss:
-                    best_val_loss = mean_relative_err_val
-                    best_model_weights = Mapping_FNN.state_dict()
-
-                ### Stop the training process if validation error < 0.5%
-                if mean_relative_err_val < 0.006:
-                    print(f"Stopping early at epoch {epoch}, since mean_relative_err_val < 0.009")
-                    break
-
-                ### Reduce the learning rate when we have validation error < 0.6%
-                if mean_relative_err_val < 0.007:
-                    scheduler.step(mean_relative_err_val)
-                if verbose:
-                    print(f"Epoch   Training   Validation\n"
-                          f"{epoch}   {loss_epoch}   {mean_relative_err_val}\n"
-                          f"====================================================")
-                if verbose:
-                    pbar.update()
-            if verbose:
-                pbar.close()
-            print("Done training!")
-
-            if verbose:
-                ### Plot the losses
-                plt.semilogy(loss_epochs, label='Training error')
-                plt.semilogy(valid_errors, label='Validation error')
-                plt.xlabel("# Epochs")
-                plt.ylabel("Relative MSE")
-                plt.legend()
-                plt.show()
-
-            if best_model_weights:
-                Mapping_FNN.load_state_dict(best_model_weights)
-
+            # Validation Phase
             Mapping_FNN.eval()
-            prediction_train = Mapping_FNN(torch.from_numpy(X_train).to(torch.float32))
-            mean_relative_error_train = self.relative_error(y_test=y_train, prediction=prediction_train,
-                                                            tensor=True, mean=False)
+            with torch.no_grad():
+                for x_val, y_val in valid_loader:
+                    y_val_pred = Mapping_FNN(x_val)
+                    relative_error_valid.append(np.linalg.norm(y_val.detach().numpy() - y_val_pred.detach().numpy())
+                                                / np.linalg.norm(y_val.detach().numpy()))
 
-            prediction_valid = Mapping_FNN(torch.from_numpy(X_valid).to(torch.float32))
-            mean_relative_error_valid = self.relative_error(y_test=y_valid, prediction=prediction_valid,
-                                                            tensor=True, mean=False)
-            if self.active:
-                y_valid = np.vstack([true_dynamics[TrainSamples:][i][:, -1] for i in range(ValidSamples)])
+                mean_relative_err_val = np.mean(relative_error_valid)
+            valid_errors.append(mean_relative_err_val)
+
+            ### Keep track of the model that results to the minimum validation error
+            if mean_relative_err_val < best_val_loss:
+                best_val_loss = mean_relative_err_val
+                best_model_weights = Mapping_FNN.state_dict()
+
+            ### Stop the training process if validation error < 0.5%
+            if mean_relative_err_val < 0.006:
+                print(f"Stopping early at epoch {epoch}, since mean_relative_err_val < 0.009")
+                break
+
+            ### Reduce the learning rate when we have validation error < 0.6%
+            if mean_relative_err_val < 0.007:
+                scheduler.step(mean_relative_err_val)
+            if verbose:
+                print(f"Epoch   Training   Validation\n"
+                      f"{epoch}   {loss_epoch}   {mean_relative_err_val}\n"
+                      f"====================================================")
+            if verbose:
+                pbar.update()
+        if verbose:
+            pbar.close()
+        print("Done training!")
+
+        if verbose:
+            ### Plot the losses
+            plt.semilogy(loss_epochs, label='Training error')
+            plt.semilogy(valid_errors, label='Validation error')
+            plt.xlabel("# Epochs")
+            plt.ylabel("Relative MSE")
+            plt.legend()
+            plt.show()
+
+        if best_model_weights:
+            Mapping_FNN.load_state_dict(best_model_weights)
+
+        Mapping_FNN.eval()
+        prediction_train = Mapping_FNN(torch.from_numpy(X_train).to(torch.float32))
+        mean_relative_error_train = self.relative_error(y_test=y_train, prediction=prediction_train,
+                                                        tensor=True, mean=False)
+
+        prediction_valid = Mapping_FNN(torch.from_numpy(X_valid).to(torch.float32))
+        mean_relative_error_valid = self.relative_error(y_test=y_valid, prediction=prediction_valid,
+                                                        tensor=True, mean=False)
 
         return Mapping_FNN, X_train, y_train, X_valid, y_valid, mean_relative_error_train, mean_relative_error_valid
 
@@ -450,34 +434,14 @@ class ParametricLANDO:
 
         return np.mean(train_error), np.mean(test_error)
 
-    def OfflinePhase(self, samples_train_al=None, samples_valid_al=None):
+    def OfflinePhase(self):
 
-        if self.active:
-            ### In the active learning case, the training and validation samples are externally computed ]
-            ### Hence, the pLANDO offline phase has these as input.
-            ### The validation set is always the same during the AL algorithm
-            ### The training set is continuously augmented
-            ### Place the first samples in the parameter space.
-            ### This is needed as initialization for the active learning method
+        params_not_varied = np.tile(self.params_fixed, (self.num_samples, 1))
 
-            params_not_varied_train = np.tile(self.params_fixed, (samples_train_al.shape[0], 1))
-            self.param_samples_al = np.concatenate((samples_train_al, params_not_varied_train), axis=1)
+        param_samples_lh = LatinHypercube(dim_sample=self.num_params_varied, low_bounds=self.low_bounds,
+                                          upp_bounds=self.upp_bounds, num_samples=self.num_samples)
 
-            ### Validation samples for the FNN training
-            params_not_varied_valid = np.tile(self.params_fixed, (samples_valid_al.shape[0], 1))
-            self.valid_samples = np.concatenate((samples_valid_al, params_not_varied_valid), axis=1)
-
-            self.param_samples = np.vstack((self.param_samples_al, self.valid_samples))
-        else:
-
-            ### Alternatively, the parameters for training are sampled from a latin hypercube
-            ### The active learning method will not be employed in this case
-            params_not_varied = np.tile(self.params_fixed, (self.num_samples, 1))
-
-            param_samples_lh = LatinHypercube(dim_sample=self.num_params_varied, low_bounds=self.low_bounds,
-                                              upp_bounds=self.upp_bounds, num_samples=self.num_samples)
-
-            self.param_samples = np.concatenate((param_samples_lh, params_not_varied), axis=1)
+        self.param_samples = np.concatenate((param_samples_lh, params_not_varied), axis=1)
 
         self.SparseDicts_all = []
         self.scaled_X_all = []
@@ -490,8 +454,9 @@ class ParametricLANDO:
         ### So, for each training sample we have W_tilde, x_tilde(sparse dictionary), and k(x_tilde, x)
         pbar = tqdm(total=self.param_samples.shape[0], desc=f"Offline Phase -> Generation of training data...")
         for val, param_sample in enumerate(self.param_samples):
-            X, _ = Lotka_Volterra_Snapshot(params=param_sample, T=self.T_end_train, num_sensors=self.num_sensors)
-            Y = Lotka_Volterra_Deriv(X, *param_sample)
+            X, _ = self.X_Snapshot(params=param_sample, T=self.T_end_train, num_sensors=self.num_sensors)
+
+            Y = self.Y_Deriv(X, *param_sample)
 
             scaledX = Scale(X)
 
@@ -559,8 +524,8 @@ class ParametricLANDO:
         for i, sample in enumerate(self.param_samples):
             ### This is to compare with the predicted value
 
-            X, _ = Lotka_Volterra_Snapshot(params=sample, T=self.T_test, num_sensors=self.num_sensors,
-                                           x0=self.ic_predict[0], y0=self.ic_predict[1])
+            X, _ = self.X_Snapshot(params=sample, T=self.T_test, num_sensors=self.num_sensors,
+                                   x0=self.ic_predict[0], y0=self.ic_predict[1])
 
             true_dynamics.append(X)
 
@@ -621,8 +586,8 @@ class ParametricLANDO:
         ### For each parameter value in the test set, compute the true dynamics for comparison
         true_dynamics_test = []
         for val, sample_test in enumerate(param_samples_test):
-            X, _ = Lotka_Volterra_Snapshot(params=sample_test, T=self.T_test, num_sensors=self.num_sensors,
-                                           x0=self.ic_predict[0], y0=self.ic_predict[1])
+            X, _ = self.X_Snapshot(params=sample_test, T=self.T_test, num_sensors=self.num_sensors,
+                                   x0=self.ic_predict[0], y0=self.ic_predict[1])
 
             ### The prediction is made only for t*
             true_dynamics_test.append(X[:, -1])

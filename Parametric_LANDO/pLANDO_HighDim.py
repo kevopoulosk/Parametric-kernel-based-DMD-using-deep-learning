@@ -1,14 +1,10 @@
-import numpy as np
-
-from Allen_Cahn.Allen_Cahn_equation import *
-from Lotka_Volterra.Sparse_Dictionary_Learning import *
+from Parametric_LANDO.Sparse_Dictionary_Learning import *
 from torch.utils.data import DataLoader
 import torch.utils.data as data
 import torch
 import matplotlib.pyplot as plt
 from torch import nn
 import os
-from os.path import exists
 
 
 class FNN(nn.Module):
@@ -85,7 +81,7 @@ class Data(data.Dataset):
 class ParametricLANDO:
 
     def __init__(self, kernel, horizon_train, dt, sparsity_tol, directory_processed_data, directory_samples,
-                 training_frac, validation_frac, problem="heat", samples_filename="/samples_heat_eq.txt", active=False):
+                 training_frac, validation_frac, problem="heat", samples_filename="/samples_heat_eq.txt"):
         """
         Class that implements the pLANDO framework (offline+online phase)
         :param kernel: The kernel used to construct the nonparametric LANDO
@@ -98,9 +94,7 @@ class ParametricLANDO:
         :param validation_frac: Fraction of data to be used for validation
         :param problem: The numerical example that we are dealing with
         :param samples_filename: THe name of the file storing the parametric samples
-        :param active: Boolean: Whether or not active learning is performed
         """
-        self.active = active
         self.kernel = kernel
         self.T_end_train = horizon_train
         self.sparsity_tol = sparsity_tol
@@ -112,17 +106,16 @@ class ParametricLANDO:
         self.samples = np.loadtxt(self.directory_samples + samples_filename)
         self.num_samples = self.samples.shape[0]
 
-        if not self.active:
-            ### Number of training, validation and test samples
-            self.num_train_samples = int(training_frac * self.samples.shape[0])
-            self.num_valid_samples = int(validation_frac * self.samples.shape[0])
-            self.num_test_samples = self.num_samples - self.num_train_samples - self.num_valid_samples
+        ### Number of training, validation and test samples
+        self.num_train_samples = int(training_frac * self.samples.shape[0])
+        self.num_valid_samples = int(validation_frac * self.samples.shape[0])
+        self.num_test_samples = self.num_samples - self.num_train_samples - self.num_valid_samples
 
-            ### The actual index of training, validation and test_samples in the self.samples matrix
-            self.train_samples = np.arange(self.num_samples)[:self.num_train_samples]
-            self.valid_samples = np.arange(self.num_samples)[
-                                 self.num_train_samples:(self.num_train_samples + self.num_valid_samples)]
-            self.test_samples = np.arange(self.num_samples)[(self.num_train_samples + self.num_valid_samples):]
+        ### The actual index of training, validation and test_samples in the self.samples matrix
+        self.train_samples = np.arange(self.num_samples)[:self.num_train_samples]
+        self.valid_samples = np.arange(self.num_samples)[
+                             self.num_train_samples:(self.num_train_samples + self.num_valid_samples)]
+        self.test_samples = np.arange(self.num_samples)[(self.num_train_samples + self.num_valid_samples):]
 
     @staticmethod
     def relative_error(y_test, prediction, tensor=False, mean=True):
@@ -211,19 +204,16 @@ class ParametricLANDO:
         ### Split the parametric samples into training and validation data
         TrainSamples = self.num_train_samples
         ValidSamples = self.num_valid_samples
-        if not self.active:
-            TestSamples = self.num_test_samples
+        TestSamples = self.num_test_samples
 
         ###The actual parametric samples
         X_train = self.samples[self.train_samples, :]
         X_valid = self.samples[self.valid_samples, :]
-        if not self.active:
-            X_test = self.samples[self.test_samples, :]
+        X_test = self.samples[self.test_samples, :]
 
         y_train = reduced_state_mat[:, self.train_samples].T
         y_valid = reduced_state_mat[:, self.valid_samples].T
-        if not self.active:
-            y_test = reduced_state_mat[:, self.test_samples].T
+        y_test = reduced_state_mat[:, self.test_samples].T
 
         dataset_train = Data(X=X_train, y=y_train)
         dataset_valid = Data(X=X_valid, y=y_valid)
@@ -283,15 +273,14 @@ class ParametricLANDO:
                 best_val_loss = mean_relative_err_val
                 best_model_weights = Mapping_FNN.state_dict()
 
-            if not self.active:
-                ### Stop the training process if validation error < 0.7%
-                if mean_relative_err_val < 0.006:
-                    print(f"Stopping early at epoch {epoch}, since mean_relative_err_val < 0.006")
-                    break
+            ### Stop the training process if validation error < 0.7%
+            if mean_relative_err_val < 0.006:
+                print(f"Stopping early at epoch {epoch}, since mean_relative_err_val < 0.006")
+                break
 
-                ### Reduce the learning rate when we have validation error < 0.95%
-                if mean_relative_err_val < 0.0065:
-                    scheduler.step(mean_relative_err_val)
+            ### Reduce the learning rate when we have validation error < 0.95%
+            if mean_relative_err_val < 0.0065:
+                scheduler.step(mean_relative_err_val)
             if verbose:
                 print(f"Epoch   Training   Validation\n"
                       f"{epoch}   {loss_epoch}   {mean_relative_err_val}\n"
@@ -314,19 +303,15 @@ class ParametricLANDO:
         if best_model_weights:
             Mapping_FNN.load_state_dict(best_model_weights)
 
-        if not self.active:
-            ### For all unseen test parameters, evaluate the neural network after training and approximate f(x,t*;mu*)
-            Mapping_FNN.eval()
-            prediction = Mapping_FNN(torch.from_numpy(X_test).to(torch.float32))
+        ### For all unseen test parameters, evaluate the neural network after training and approximate f(x,t*;mu*)
+        Mapping_FNN.eval()
+        prediction = Mapping_FNN(torch.from_numpy(X_test).to(torch.float32))
 
-            mean_relative_error = self.relative_error(y_test=y_test, prediction=prediction, tensor=True)
+        mean_relative_error = self.relative_error(y_test=y_test, prediction=prediction, tensor=True)
 
-            print(f"FNN Training, Mean test error, {TestSamples} samples: {mean_relative_error}")
+        print(f"FNN Training, Mean test error, {TestSamples} samples: {mean_relative_error}")
 
-            return Mapping_FNN, X_train, y_train, X_test, y_test, mean_relative_error
-
-        else:
-            return Mapping_FNN, X_train, y_train, X_valid, y_valid
+        return Mapping_FNN, X_train, y_train, X_test, y_test, mean_relative_error
 
     def Predict2FreeFem(self, predictions, T_test):
         """
@@ -400,9 +385,6 @@ class ParametricLANDO:
         y_train = np.vstack(y_train)
 
         y_test = []
-        if self.active:
-            self.test_samples = self.valid_samples
-
         for i in self.test_samples:
             true_state = np.load(self.directory_data + f"/sample{i}.npy")[:, test_instance]
             y_test.append(true_state)
@@ -414,65 +396,64 @@ class ParametricLANDO:
         y_final_pred_test = self.U @ model_interp(torch.from_numpy(x_test).to(torch.float32)).detach().numpy().T
         test_error = self.relative_error(y_test, y_final_pred_test.T, mean=False, tensor=False)
 
-        if not self.active:
-            directory = directory_save + f"/t_test={T_end_test}"
+        directory = directory_save + f"/t_test={T_end_test}"
 
-            ### Visualise the performance for training
-            plt.figure()
-            plt.scatter(x_train[:, 0], x_train[:, 1], c=train_error, cmap="plasma")
-            if self.problem == "heat":
-                plt.xlabel(r"$\mu_1 = D$")
-                plt.ylabel(r"$\mu_2 = \alpha$")
-            else:
-                plt.xlabel(r"$\mu_1 = \lambda$")
-                plt.ylabel(r"$\mu_2 = \epsilon$")
-            filename = "Training.png"
-            plt.colorbar(label=r'$L_2$ relative error')
-            plt.savefig(directory + filename)
-            plt.show()
+        ### Visualise the performance for training
+        plt.figure()
+        plt.scatter(x_train[:, 0], x_train[:, 1], c=train_error, cmap="plasma")
+        if self.problem == "heat":
+            plt.xlabel(r"$\mu_1 = D$")
+            plt.ylabel(r"$\mu_2 = \alpha$")
+        else:
+            plt.xlabel(r"$\mu_1 = \lambda$")
+            plt.ylabel(r"$\mu_2 = \epsilon$")
+        filename = "Training.png"
+        plt.colorbar(label=r'$L_2$ relative error')
+        plt.savefig(directory + filename)
+        plt.show()
 
-            ### Testing performance
-            plt.figure()
-            plt.scatter(x_test[:, 0], x_test[:, 1], c=test_error, cmap="plasma")
-            if self.problem == "heat":
-                plt.xlabel(r"$\mu_1 = D$")
-                plt.ylabel(r"$\mu_2 = \alpha$")
-            else:
-                plt.xlabel(r"$\mu_1 = \lambda$")
-                plt.ylabel(r"$\mu_2 = \epsilon$")
-            filename = "Test.png"
-            plt.colorbar(label=r'$L_2$ relative error')
-            plt.savefig(directory + filename)
-            plt.show()
+        ### Testing performance
+        plt.figure()
+        plt.scatter(x_test[:, 0], x_test[:, 1], c=test_error, cmap="plasma")
+        if self.problem == "heat":
+            plt.xlabel(r"$\mu_1 = D$")
+            plt.ylabel(r"$\mu_2 = \alpha$")
+        else:
+            plt.xlabel(r"$\mu_1 = \lambda$")
+            plt.ylabel(r"$\mu_2 = \epsilon$")
+        filename = "Test.png"
+        plt.colorbar(label=r'$L_2$ relative error')
+        plt.savefig(directory + filename)
+        plt.show()
 
-            ### LANDO Vs Ground Truth
-            lando_error_train_samples = lando_predict_rel_errors[:len(self.train_samples)]
-            plt.figure()
-            plt.scatter(x_train[:, 0], x_train[:, 1], c=lando_error_train_samples, cmap="plasma")
-            if self.problem == "heat":
-                plt.xlabel(r"$\mu_1 = D$")
-                plt.ylabel(r"$\mu_2 = \alpha$")
-            else:
-                plt.xlabel(r"$\mu_1 = \lambda$")
-                plt.ylabel(r"$\mu_2 = \epsilon$")
-            filename = "LANDO_Vs_Truth_TRAIN.png"
-            plt.colorbar(label=r'LANDO $L_2$ relative error')
-            plt.savefig(directory + filename)
-            plt.show()
+        ### LANDO Vs Ground Truth
+        lando_error_train_samples = lando_predict_rel_errors[:len(self.train_samples)]
+        plt.figure()
+        plt.scatter(x_train[:, 0], x_train[:, 1], c=lando_error_train_samples, cmap="plasma")
+        if self.problem == "heat":
+            plt.xlabel(r"$\mu_1 = D$")
+            plt.ylabel(r"$\mu_2 = \alpha$")
+        else:
+            plt.xlabel(r"$\mu_1 = \lambda$")
+            plt.ylabel(r"$\mu_2 = \epsilon$")
+        filename = "LANDO_Vs_Truth_TRAIN.png"
+        plt.colorbar(label=r'LANDO $L_2$ relative error')
+        plt.savefig(directory + filename)
+        plt.show()
 
-            lando_error_test_samples = lando_predict_rel_errors[(len(self.train_samples) + len(self.valid_samples)):]
-            plt.figure()
-            plt.scatter(x_test[:, 0], x_test[:, 1], c=lando_error_test_samples, cmap="plasma")
-            if self.problem == "heat":
-                plt.xlabel(r"$\mu_1 = D$")
-                plt.ylabel(r"$\mu_2 = \alpha$")
-            else:
-                plt.xlabel(r"$\mu_1 = \lambda$")
-                plt.ylabel(r"$\mu_2 = \epsilon$")
-            filename = "LANDO_Vs_Truth_TEST.png"
-            plt.colorbar(label=r'LANDO $L_2$ relative error')
-            plt.savefig(directory + filename)
-            plt.show()
+        lando_error_test_samples = lando_predict_rel_errors[(len(self.train_samples) + len(self.valid_samples)):]
+        plt.figure()
+        plt.scatter(x_test[:, 0], x_test[:, 1], c=lando_error_test_samples, cmap="plasma")
+        if self.problem == "heat":
+            plt.xlabel(r"$\mu_1 = D$")
+            plt.ylabel(r"$\mu_2 = \alpha$")
+        else:
+            plt.xlabel(r"$\mu_1 = \lambda$")
+            plt.ylabel(r"$\mu_2 = \epsilon$")
+        filename = "LANDO_Vs_Truth_TEST.png"
+        plt.colorbar(label=r'LANDO $L_2$ relative error')
+        plt.savefig(directory + filename)
+        plt.show()
 
         return np.mean(train_error), np.mean(test_error), np.std(train_error), np.std(test_error)
 
@@ -528,43 +509,7 @@ class ParametricLANDO:
             plt.savefig(directory + filename)
             plt.close()
 
-    def OfflinePhase(self, samples_train_al=None, samples_valid_al=None):
-
-        if self.active:
-
-            samples_all = np.vstack((samples_valid_al, samples_train_al))
-            filename_txt = 'samples_allen_cahn_al.txt'
-
-            file_path_data = os.path.join(self.directory_samples, filename_txt)
-
-            np.savetxt(file_path_data, samples_all)
-
-            self.samples = np.loadtxt(self.directory_samples + "/" + filename_txt)
-
-            ### Generate the raining and validation data that haven't been generated
-            ### We first start with validation data
-            for j in range(samples_valid_al.shape[0]):
-
-                ### If the file does not exist then generate the snapshot
-                if not exists(self.directory_data + f"/sample{j}.npy"):
-                    X = Allen_Cahn_eq(D=samples_valid_al[j][0], a=samples_valid_al[j][1])
-                    np.save(self.directory_data + f"/sample{j}", X)
-
-            ### We now proceed to the training data
-            for i in range(samples_train_al.shape[0]):
-
-                ### If the file does not exist then generate the snapshot
-                if not exists(self.directory_data + f"/sample{j + 1 + i}.npy"):
-                    X = Allen_Cahn_eq(D=samples_train_al[i][0], a=samples_train_al[i][1])
-                    np.save(self.directory_data + f"/sample{j + 1 + i}", X)
-
-            self.num_train_samples = samples_train_al.shape[0]
-            self.num_valid_samples = samples_valid_al.shape[0]
-            ### In this case, the total number of samples is NumTraining + NumValidation
-            self.num_samples = self.num_train_samples + self.num_valid_samples
-
-            self.valid_samples = np.arange(self.num_samples)[:self.num_valid_samples]
-            self.train_samples = np.arange(self.num_samples)[self.num_valid_samples:]
+    def OfflinePhase(self):
 
         self.SparseDicts_all = []
         self.scaled_X_all = []
@@ -676,62 +621,43 @@ class ParametricLANDO:
         X_reduced_mi_lando = self.U.T @ X1_lando
 
         ### Now we employ the NN to learn the mapping from parameter space to the reduced state of the system.
-        if self.active:
-            I_Mapping, X_train, y_train, X_valid, y_valid = self.train_fnn(reduced_output=X_reduced_mi_lando.shape[0],
-                                                                           fnn_depth=fnn_depth,
-                                                                           fnn_width=fnn_width,
-                                                                           reduced_state_mat=X_reduced_mi_lando,
-                                                                           epochs=epochs, batch_size_frac=batch_size,
-                                                                           verbose=verbose)
 
-            mean_train_error_al, mean_test_error_al, _, _ = self.Visual_2D(x_train=X_train,
-                                                                           x_test=X_valid,
-                                                                           model_interp=I_Mapping,
-                                                                           T_end_test=T_end_test,
-                                                                           lando_predict_rel_errors=reconstruction_relative_errors,
-                                                                           test_instance=test_instance,
-                                                                           directory_save=directory_save)
+        I_Mapping, X_train, y_train, X_test, y_test, _ = self.train_fnn(reduced_output=X_reduced_mi_lando.shape[0],
+                                                                        fnn_depth=fnn_depth,
+                                                                        fnn_width=fnn_width,
+                                                                        reduced_state_mat=X_reduced_mi_lando,
+                                                                        epochs=epochs, batch_size_frac=batch_size,
+                                                                        verbose=verbose)
 
-            return X_train, y_train, X_valid, y_valid, mean_train_error_al, mean_test_error_al
+        ### Now, we evaluate the mapping on the test samples
+        x_fom_predictions, x_true = self.Test_Eval(model_interp=I_Mapping, test_instance=test_instance)
 
+        mean_train_error, mean_test_error, std_train_error, std_test_error = self.Visual_2D(x_train=X_train,
+                                                                                            x_test=X_test,
+                                                                                            model_interp=I_Mapping,
+                                                                                            T_end_test=T_end_test,
+                                                                                            lando_predict_rel_errors=reconstruction_relative_errors,
+                                                                                            test_instance=test_instance,
+                                                                                            directory_save=directory_save)
+
+        lando_train, lando_extrap = self.LANDO_Vs_GrTr(X_true_all=X_true_all, X_lando_all=X_lando_all)
+
+        if self.problem == 'heat':
+            ### Create directory to store prediction data
+            try:
+                os.mkdir(
+                    self.directory_samples.replace("/Parameter_Samples",
+                                                   "") + f'/Predicted_Data/t_test = {T_end_test}')
+                ### for vtk visuals
+                os.mkdir(
+                    self.directory_samples.replace("/Parameter_Samples",
+                                                   "") + f'/Predicted_Data_vtk/t_test = {T_end_test}')
+            except:
+                print('Sth went wrong, please check')
+
+            ### Transform the prediction files into FreeFem format
+            self.Predict2FreeFem(predictions=x_fom_predictions, T_test=T_end_test)
         else:
+            self.Visual_Allen_Cahn(x_reference=x_true, x_prediction=x_fom_predictions, t_end_test=T_end_test)
 
-            I_Mapping, X_train, y_train, X_test, y_test, _ = self.train_fnn(reduced_output=X_reduced_mi_lando.shape[0],
-                                                                            fnn_depth=fnn_depth,
-                                                                            fnn_width=fnn_width,
-                                                                            reduced_state_mat=X_reduced_mi_lando,
-                                                                            epochs=epochs, batch_size_frac=batch_size,
-                                                                            verbose=verbose)
-
-            ### Now, we evaluate the mapping on the test samples
-            x_fom_predictions, x_true = self.Test_Eval(model_interp=I_Mapping, test_instance=test_instance)
-
-            mean_train_error, mean_test_error, std_train_error, std_test_error = self.Visual_2D(x_train=X_train,
-                                                                                                x_test=X_test,
-                                                                                                model_interp=I_Mapping,
-                                                                                                T_end_test=T_end_test,
-                                                                                                lando_predict_rel_errors=reconstruction_relative_errors,
-                                                                                                test_instance=test_instance,
-                                                                                                directory_save=directory_save)
-
-            lando_train, lando_extrap = self.LANDO_Vs_GrTr(X_true_all=X_true_all, X_lando_all=X_lando_all)
-
-            if self.problem == 'heat':
-                ### Create directory to store prediction data
-                try:
-                    os.mkdir(
-                        self.directory_samples.replace("/Parameter_Samples",
-                                                       "") + f'/Predicted_Data/t_test = {T_end_test}')
-                    ### for vtk visuals
-                    os.mkdir(
-                        self.directory_samples.replace("/Parameter_Samples",
-                                                       "") + f'/Predicted_Data_vtk/t_test = {T_end_test}')
-                except:
-                    print('Sth went wrong, please check')
-
-                ### Transform the prediction files into FreeFem format
-                self.Predict2FreeFem(predictions=x_fom_predictions, T_test=T_end_test)
-            else:
-                self.Visual_Allen_Cahn(x_reference=x_true, x_prediction=x_fom_predictions, t_end_test=T_end_test)
-
-            return [mean_train_error, mean_test_error, std_train_error, std_test_error, lando_train, lando_extrap]
+        return [mean_train_error, mean_test_error, std_train_error, std_test_error, lando_train, lando_extrap]
