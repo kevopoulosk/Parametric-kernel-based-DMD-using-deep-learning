@@ -1,7 +1,7 @@
 ![fig_github](https://github.com/user-attachments/assets/52756efe-4177-4404-84fc-d0226e7ea0ea)
 
 
-# Kernel-based parametric dynamic mode decomposition with active learning 
+# Parametric kernel-based dynamic mode decomposition using deep learning
 
 
 This repository contains the methods and techniques implemented in the context of the thesis
