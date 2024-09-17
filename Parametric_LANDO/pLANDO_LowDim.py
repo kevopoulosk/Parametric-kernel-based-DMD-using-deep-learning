@@ -6,7 +6,6 @@ from sklearn import preprocessing
 import torch.utils.data as data
 import torch
 from torch import nn
-from scipy.interpolate import RBFInterpolator
 from tqdm import tqdm
 
 
@@ -28,8 +27,8 @@ class FNN(nn.Module):
     def __init__(self, num_input, num_output, depth, width):
         """
         Class that implements the fully connected neural network
-        It is used to learn the mapping from the parameter space --> to x or f(x)
-        :param num_input: The number of input nodes (e.g. 4 for Lotka-Volterra model)
+        It is used to learn the mapping from the parameter space to the state space
+        :param num_input: The number of input nodes
         :param num_output: The number of output nodes
         :param depth: number of hidden layers
         :param width: number of nodes in each layer
@@ -105,7 +104,7 @@ def LatinHypercube(dim_sample, low_bounds, upp_bounds, num_samples):
 class ParametricLANDO:
 
     def __init__(self, kernel, horizon_train, sparsity_tol, num_samples_train, num_sensors, batch_frac, params_varied,
-                 low_bound, upp_bound, fixed_params_val, generate_snapshot, generate_deriv, rbf=False):
+                 low_bound, upp_bound, fixed_params_val, generate_snapshot, generate_deriv):
         """
         Class that implements the parametric form of the LANDO framework.
         :param kernel: The chosen kernel. For instance this be linear, quadratic or gaussian. For this Lotka-Volterra
@@ -120,6 +119,8 @@ class ParametricLANDO:
         :param low_bound: the lower bound of parameters that are sampled
         :param upp_bound: the upper bound of parameters that are sampled
         :param fixed_params_val: the values of the parameters that are assumed to be fixed
+        :param generate_snapshot: function that generates the snapshot data X
+        :param generate_deriv: function that generates the derivative data (Y) for a system
         """
         self.kernel = kernel
         self.T_end_train = horizon_train
@@ -131,7 +132,6 @@ class ParametricLANDO:
         self.low_bounds = low_bound
         self.upp_bounds = upp_bound
         self.params_fixed = fixed_params_val
-        self.rbf = rbf
         self.X_Snapshot = generate_snapshot
         self.Y_Deriv = generate_deriv
 
@@ -147,41 +147,11 @@ class ParametricLANDO:
             err_list.append(err)
 
         if mean:
-            return np.mean(err_list)
+            return np.mean(err_list), np.std(err_list)
         else:
             return err_list
 
-    def RBF_Interp(self, fraction_train, lando_dynamics):
-        ### Split the parametric samples into training and validation data
-        TrainSamples = int(self.param_samples.shape[0] * fraction_train)
-        # ### Number of samples for test
-        # TestSamples = num_samples_test
-
-        if self.num_params_varied > 1:
-            scaler = preprocessing.MaxAbsScaler()
-
-        ### If 1+ parameters are varied, then they are scaled to the range (0, 1).
-        ### This scaling enhances the performance of the NN interpolator
-        if self.num_params_varied > 1:
-            X_train = scaler.fit_transform(self.param_samples[:TrainSamples, :self.num_params_varied])
-            # X_test = scaler.fit_transform(param_samples_test[:, :self.num_params_varied])
-        else:
-            X_train = self.param_samples[:TrainSamples, :self.num_params_varied]
-            # X_test = param_samples_test[:, :self.num_params_varied]
-
-        y_train = np.vstack([lando_dynamics[:TrainSamples][i][:, -1] for i in range(TrainSamples)])
-        # y_test = np.vstack([true_dynamics_test[i] for i in range(TestSamples)])
-
-        ### RBF interpolation
-        rbf_function = RBFInterpolator(X_train, y_train, kernel='cubic', degree=1)
-
-        train_prediction = rbf_function(X_train)
-
-        relative_error_train = self.relative_error(y_test=y_train, prediction=train_prediction, mean=False)
-
-        return rbf_function, X_train, y_train, relative_error_train
-
-    def train_fnn(self, fnn_depth, fnn_width, fraction_train, lando_dynamics, epochs, verbose=True, true_dynamics=None):
+    def train_fnn(self, fnn_depth, fnn_width, fraction_train, lando_dynamics, epochs, verbose=True):
 
         ### Split the parametric samples into training and validation data
         TrainSamples = int(self.param_samples.shape[0] * fraction_train)
@@ -259,12 +229,12 @@ class ParametricLANDO:
                 best_model_weights = Mapping_FNN.state_dict()
 
             ### Stop the training process if validation error < 0.5%
-            if mean_relative_err_val < 0.006:
+            if mean_relative_err_val < 0.0075:
                 print(f"Stopping early at epoch {epoch}, since mean_relative_err_val < 0.009")
                 break
 
             ### Reduce the learning rate when we have validation error < 0.6%
-            if mean_relative_err_val < 0.007:
+            if mean_relative_err_val < 0.008:
                 scheduler.step(mean_relative_err_val)
             if verbose:
                 print(f"Epoch   Training   Validation\n"
@@ -304,135 +274,137 @@ class ParametricLANDO:
         sort_index = np.squeeze(np.argsort(x_train, axis=0))
         y_train_sort = y_train[sort_index, :]
 
-        if self.rbf:
-            y_final_pred_train = interp_model(X_train_sort)
-            error_train = self.relative_error(y_train_sort, y_final_pred_train)
-        else:
-            y_final_pred_train = interp_model(torch.from_numpy(X_train_sort).to(torch.float32))
-            error_train = self.relative_error(y_train_sort, y_final_pred_train, tensor=True)
+        y_final_pred_train = interp_model(torch.from_numpy(X_train_sort).to(torch.float32))
+        error_train_mean, _ = self.relative_error(y_train_sort, y_final_pred_train, tensor=True)
 
-        plt.figure(figsize=(11, 5))
-        plt.plot(X_train_sort, y_train_sort[:, 0], label=r'$x_1$')
-        plt.plot(X_train_sort, y_train_sort[:, 1], label=r'$x_2$')
-        plt.xlabel(r'$\mu_1 = \alpha$')
-        plt.ylabel(r"$\mathbf{x}$")
+        plt.figure(figsize=(9, 2.5))
 
-        if self.rbf:
-            plt.plot(X_train_sort, y_final_pred_train[:, 0], '.', label=r'$x^{pred}_{1}$')
-            plt.plot(X_train_sort, y_final_pred_train[:, 1], '.', label=r'$x^{pred}_{2}$')
-            filename = "Training_RBF.png"
-        else:
-            plt.plot(X_train_sort, y_final_pred_train[:, 0].detach().numpy(), '.', label=r'$x^{pred}_{1}$')
-            plt.plot(X_train_sort, y_final_pred_train[:, 1].detach().numpy(), '.', label=r'$x^{pred}_{2}$')
-            filename = "Training.png"
+        params = {
+            'axes.labelsize': 15.4,
+            'font.size': 15.4,
+            'legend.fontsize': 15.4,
+            'xtick.labelsize': 15.4,
+            'ytick.labelsize': 15.4,
+            'text.usetex': False,
+            'axes.linewidth': 2,
+            'xtick.major.width': 2,
+            'ytick.major.width': 2,
+            'xtick.major.size': 2,
+            'ytick.major.size': 2,
+        }
+        plt.rcParams.update(params)
 
-        plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+        plt.plot(X_train_sort, y_train_sort[:, 0], label= 'ground truth', linewidth=2.15)
+        plt.plot(X_train_sort, y_train_sort[:, 1], linewidth=2.15)
+
+        plt.plot(X_train_sort, y_final_pred_train[:, 0].detach().numpy(), '--', label=r'$x_1$ prediction',
+                 linewidth=2)
+        plt.plot(X_train_sort, y_final_pred_train[:, 1].detach().numpy(), '--', label=r'$x_2$ prediction',
+                 linewidth=2)
+
+        filename = "Training.png"
+
+        plt.legend(ncol=4, bbox_to_anchor=(1.01, 1.25), frameon=False)
         plt.grid(True)
 
         plt.savefig(directory + filename)
+        plt.clf()
 
         X_test_sort = np.sort(x_test, axis=0)
         sort_index = np.squeeze(np.argsort(x_test, axis=0))
         y_test_sort = y_test[sort_index, :]
 
-        if self.rbf:
-            y_final_pred = interp_model(X_test_sort)
-            error_test = self.relative_error(y_test_sort, y_final_pred)
-        else:
-            y_final_pred = interp_model(torch.from_numpy(X_test_sort).to(torch.float32))
-            error_test = self.relative_error(y_test_sort, y_final_pred, tensor=True)
+        y_final_pred = interp_model(torch.from_numpy(X_test_sort).to(torch.float32))
+        error_test_mean, error_test_std = self.relative_error(y_test_sort, y_final_pred, tensor=True)
 
-        plt.figure(figsize=(11, 5))
-        plt.plot(X_test_sort, y_test_sort[:, 0], label=r'$x_1$')
-        plt.plot(X_test_sort, y_test_sort[:, 1], label=r'$x_2$')
+        plt.figure(figsize=(9, 2.5))
+        plt.rcParams.update(params)
+        plt.plot(X_test_sort, y_test_sort[:, 0], color='black', label='ground truth', linewidth=2.15)
+        plt.plot(X_test_sort, y_test_sort[:, 1], color='black', linewidth=2.15)
 
         plt.grid(True)
 
-        plt.xlabel(r'$\mu_1 = \alpha$')
-        plt.ylabel(r"$\mathbf{x}$")
+        plt.plot(X_test_sort, y_final_pred[:, 0].detach().numpy(), '--', color='tab:red', label=r'$x_1$ prediction',
+                 linewidth=2)
+        plt.plot(X_test_sort, y_final_pred[:, 1].detach().numpy(), '--', color='tab:green', label=r'$x_2$ prediction',
+                 linewidth=2)
+        filename = "Test.png"
 
-        if self.rbf:
-            plt.plot(X_test_sort, y_final_pred[:, 0], '.', label=r'$x^{pred}_{1}$')
-            plt.plot(X_test_sort, y_final_pred[:, 1], '.', label=r'$x^{pred}_{2}$')
-            filename = "Test_RBF.png"
-
-        else:
-            plt.plot(X_test_sort, y_final_pred[:, 0].detach().numpy(), '.', label=r'$x^{pred}_{1}$')
-            plt.plot(X_test_sort, y_final_pred[:, 1].detach().numpy(), '.', label=r'$x^{pred}_{2}$')
-            filename = "Test.png"
-
-        plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+        plt.legend(ncol=4, bbox_to_anchor=(1.01, 1.25), frameon=False)
         plt.savefig(directory + filename)
+        plt.clf()
 
-        plt.figure(figsize=(11, 5))
-        plt.plot(X_test_sort, y_test_sort[:, 0], label=r'$x_1$ Ground Truth')
-        plt.plot(X_test_sort, y_test_sort[:, 1], label=r'$x_2$ Ground Truth')
+        plt.figure(figsize=(9, 2.5))
+        plt.plot(X_test_sort, y_test_sort[:, 0], label='ground truth')
+        plt.plot(X_test_sort, y_test_sort[:, 1], label='ground truth')
         plt.plot(X_train_sort, y_train_sort[:, 0], '-.', color='black', label=r'$x_1$ LANDO')
         plt.plot(X_train_sort, y_train_sort[:, 1], '-.', color='black', label=r'$x_2$ LANDO')
-
-        plt.ylabel(r"$\mathbf{x}$")
-        plt.xlabel(r'$\mu_1 = \alpha$')
         plt.legend(loc='best')
         filename = "LANDO_Vs_Truth.png"
         plt.grid(True)
         plt.savefig(directory + filename)
+        plt.clf()
 
-        return error_train, error_test
+        return error_train_mean, error_test_mean, error_test_std
 
     def Visual_2D(self, x_train, y_train, x_test, y_test, test_samples, train_samples, interp_model, lando_error,
                   IC_predict, T_end_test):
 
-        if self.rbf:
-            y_final_pred_train = interp_model(x_train)
-            train_error = self.relative_error(y_train, y_final_pred_train, mean=False)
+        y_final_pred_train = interp_model(torch.from_numpy(x_train).to(torch.float32))
+        train_error = self.relative_error(y_train, y_final_pred_train, mean=False, tensor=True)
 
-            y_final_pred_test = interp_model(torch.from_numpy(x_test).to(torch.float32))
-            test_error = self.relative_error(y_test, y_final_pred_test, mean=False)
-        else:
-            y_final_pred_train = interp_model(torch.from_numpy(x_train).to(torch.float32))
-            train_error = self.relative_error(y_train, y_final_pred_train, mean=False, tensor=True)
+        y_final_pred_test = interp_model(torch.from_numpy(x_test).to(torch.float32))
+        test_error = self.relative_error(y_test, y_final_pred_test, mean=False, tensor=True)
 
-            y_final_pred_test = interp_model(torch.from_numpy(x_test).to(torch.float32))
-            test_error = self.relative_error(y_test, y_final_pred_test, mean=False, tensor=True)
+        directory = f"/Users/konstantinoskevopoulos/Desktop/Lotka_Volterra_Results/Param2D/IC={IC_predict}, t_end={T_end_test}/"
 
-        directory = f"/Users/konstantinoskevopoulos/Desktop/Lotka_Volterra_Results_Alternative/Param2D/IC={IC_predict}, t_end={T_end_test}/"
         plt.figure()
-        plt.scatter(train_samples[:, 0], train_samples[:, 1], c=train_error, cmap="plasma")
-        plt.xlabel(r"$\mu_1$")
-        plt.ylabel(r"$\mu_2$")
 
-        if self.rbf:
-            filename = "Training_RBF.png"
-        else:
-            filename = "Training.png"
+        params = {
+            'axes.labelsize': 15.4,
+            'font.size': 15.4,
+            'legend.fontsize': 15.4,
+            'xtick.labelsize': 15.4,
+            'ytick.labelsize': 15.4,
+            'text.usetex': False,
+            'axes.linewidth': 2,
+            'xtick.major.width': 2,
+            'ytick.major.width': 2,
+            'xtick.major.size': 2,
+            'ytick.major.size': 2,
+        }
+        plt.rcParams.update(params)
+
+        plt.scatter(train_samples[:, 0], train_samples[:, 1], c=train_error, cmap="plasma")
+
+        filename = "Training.png"
 
         plt.colorbar(label=r'$L_2$ relative error')
         plt.savefig(directory + filename)
-        plt.show()
+        plt.clf()
 
         plt.figure()
         plt.scatter(test_samples[:, 0], test_samples[:, 1], c=test_error, cmap="plasma")
-        plt.xlabel(r"$\mu_1$")
-        plt.ylabel(r"$\mu_2$")
 
-        if self.rbf:
-            filename = "Test_RBF.png"
-        else:
-            filename = "Test.png"
-        plt.colorbar(label=r'$L_2$ relative error')
+        filename = "Test.png"
+
+        plt.colorbar()
         plt.savefig(directory + filename)
-        plt.show()
+        plt.clf()
 
         plt.figure()
         plt.scatter(train_samples[:, 0], train_samples[:, 1], c=lando_error, cmap="plasma")
         plt.xlabel(r"$\mu_1$")
         plt.ylabel(r"$\mu_2$")
         filename = "LANDO_Vs_Truth.png"
-        plt.colorbar(label=r'LANDO $L_2$ relative error')
+        plt.colorbar()
         plt.savefig(directory + filename)
-        plt.show()
+        plt.clf()
 
-        return np.mean(train_error), np.mean(test_error)
+        train_error_mean, _ = self.relative_error(y_train, y_final_pred_train, mean=True, tensor=True)
+        test_error_mean, test_error_std = self.relative_error(y_test, y_final_pred_test, mean=True, tensor=True)
+
+        return train_error_mean, test_error_mean, test_error_std
 
     def OfflinePhase(self):
 
@@ -553,21 +525,13 @@ class ParametricLANDO:
 
         print(f"The mean relative reconstruction errors are: {reconstruction_relative_errors}")
 
-        if self.rbf:
-            interp_model, X_train, y_train, rel_err_train = self.RBF_Interp(fraction_train=self.train_frac,
-                                                                            lando_dynamics=lando_dynamics)
-            rel_err_valid = None
-            X_valid = None
-            y_valid = None
-        else:
-            interp_model, X_train, y_train, X_valid, y_valid, rel_err_train, rel_err_valid = self.train_fnn(
-                fnn_depth=fnn_depth,
-                fnn_width=fnn_width,
-                fraction_train=self.train_frac,
-                lando_dynamics=lando_dynamics,
-                epochs=epochs,
-                verbose=verb,
-                true_dynamics=true_dynamics)
+        interp_model, X_train, y_train, X_valid, y_valid, rel_err_train, rel_err_valid = self.train_fnn(
+            fnn_depth=fnn_depth,
+            fnn_width=fnn_width,
+            fraction_train=self.train_frac,
+            lando_dynamics=lando_dynamics,
+            epochs=epochs,
+            verbose=verb)
 
         return interp_model, X_train, y_train, X_valid, y_valid, rel_err_train, rel_err_valid, reconstruction_relative_errors
 
@@ -595,42 +559,72 @@ class ParametricLANDO:
         ### Number of samples for test
         TestSamples = num_samples_test
         X_test = param_samples_test[:, :self.num_params_varied]
+        if self.num_params_varied > 1:
+            scaler = preprocessing.MaxAbsScaler()
+            X_test = scaler.fit_transform(X_test)
+
         y_test = np.vstack([true_dynamics_test[i] for i in range(TestSamples)])
 
-        if self.rbf:
-            prediction = interp_model(X_test)
+        ### For all unseen test parameters, evaluate the neural network after training and approximate f(x,t*;mu*)
+        interp_model.eval()
+        prediction = interp_model(torch.from_numpy(X_test).to(torch.float32))
 
-            mean_relative_error = self.relative_error(y_test=y_test, prediction=prediction)
+        mean_relative_errors, std_relative_errors = self.relative_error(y_test=y_test,
+                                                                        prediction=prediction,
+                                                                        tensor=True)
 
-            print(f"RBF mean test error:{mean_relative_error}, {TestSamples} test samples")
-        else:
-
-            ### For all unseen test parameters, evaluate the neural network after training and approximate f(x,t*;mu*)
-            interp_model.eval()
-            prediction = interp_model(torch.from_numpy(X_test).to(torch.float32))
-
-            mean_relative_error = self.relative_error(y_test=y_test, prediction=prediction, tensor=True)
-
-            print(f"NN mean test error: {mean_relative_error}, {TestSamples} test samples")
+        print(f"NN mean test error: {mean_relative_errors}, {TestSamples} test samples")
 
         if visuals:
 
             if self.num_params_varied == 1:
 
-                mean_train_error, mean_test_error = self.Visual_1D(x_train=x_train, y_train=y_train, x_test=X_test,
-                                                                   y_test=y_test,
-                                                                   interp_model=interp_model,
-                                                                   directory=directory_1d)
+                mean_train_error, mean_test_error, std_test_error = self.Visual_1D(x_train=x_train, y_train=y_train,
+                                                                                   x_test=X_test,
+                                                                                   y_test=y_test,
+                                                                                   interp_model=interp_model,
+                                                                                   directory=directory_1d)
             else:
 
                 test_samples = param_samples_lh_test
                 train_samples = self.param_samples[:int(self.train_frac * self.num_samples), :self.num_params_varied]
                 lando_error = reconstruction_relative_errors[:int(self.train_frac * self.num_samples)]
 
-                mean_train_error, mean_test_error = self.Visual_2D(x_train=x_train, x_test=X_test, y_train=y_train,
-                                                                   y_test=y_test,
-                                                                   interp_model=interp_model, test_samples=test_samples,
-                                                                   train_samples=train_samples, lando_error=lando_error,
-                                                                   IC_predict=self.ic_predict, T_end_test=self.T_test)
+                mean_train_error, mean_test_error, std_test_error = self.Visual_2D(x_train=x_train, x_test=X_test,
+                                                                                   y_train=y_train,
+                                                                                   y_test=y_test,
+                                                                                   interp_model=interp_model,
+                                                                                   test_samples=test_samples,
+                                                                                   train_samples=train_samples,
+                                                                                   lando_error=lando_error,
+                                                                                   IC_predict=self.ic_predict,
+                                                                                   T_end_test=self.T_test)
 
-            return mean_train_error, mean_test_error
+        else:
+
+            if self.num_params_varied == 1:
+
+                ### Error of the training set
+                X_train_sort = np.sort(x_train, axis=0)
+                sort_index = np.squeeze(np.argsort(x_train, axis=0))
+                y_train_sort = y_train[sort_index, :]
+
+                y_final_pred_train = interp_model(torch.from_numpy(X_train_sort).to(torch.float32))
+                mean_train_error, _ = self.relative_error(y_train_sort, y_final_pred_train, tensor=True)
+
+                ### Error of the test set
+                X_test_sort = np.sort(X_test, axis=0)
+                sort_index = np.squeeze(np.argsort(X_test, axis=0))
+                y_test_sort = y_test[sort_index, :]
+
+                y_final_pred = interp_model(torch.from_numpy(X_test_sort).to(torch.float32))
+                mean_test_error, std_test_error = self.relative_error(y_test_sort, y_final_pred, tensor=True)
+
+            else:
+                y_final_pred_train = interp_model(torch.from_numpy(x_train).to(torch.float32))
+                mean_train_error = self.relative_error(y_train, y_final_pred_train, tensor=True)
+
+                y_final_pred_test = interp_model(torch.from_numpy(X_test).to(torch.float32))
+                mean_test_error, std_test_error = self.relative_error(y_test, y_final_pred_test, tensor=True)
+
+        return mean_train_error, mean_test_error, std_test_error

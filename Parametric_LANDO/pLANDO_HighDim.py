@@ -12,8 +12,8 @@ class FNN(nn.Module):
     def __init__(self, num_input, num_output, depth, width):
         """
         Class that implements the fully connected neural network
-        It is used to learn the mapping from the parameter space --> to x or f(x)
-        :param num_input: The number of input nodes (e.g. 4 for Lotka-Volterra model)
+        It is used to learn the mapping from the parameter space to the state space
+        :param num_input: The number of input nodes
         :param num_output: The number of output nodes
         :param depth: number of hidden layers
         :param width: number of nodes in each layer
@@ -129,63 +129,75 @@ class ParametricLANDO:
             err_list.append(err)
 
         if mean:
-            return np.mean(err_list)
+            return np.mean(err_list), np.std(err_list)
         else:
             return err_list
 
     @staticmethod
-    def SVD(num_components, snapshot_mat):
+    def SVD(num_components, snapshot_mat, auto=True, plot=False):
         """
         Function that calculates the rank-r truncated SVD of a matrix
         :param num_components: Number of singular values to consider. This is the truncation threshold for the
         rank-r truncated SVD
         :param snapshot_mat: The snapshot matrix that will be decomposed
+        :param auto: Whether to perform an experiment or not
+        :param plot: Whether to plot results or not
         :return:
         """
         print("Initializing SVD for stacked snapshot matrix X1")
 
-        # compute and subtract the mean (mean centered data/everything to the center of the mean)
-        # split in training, validation and test cases
-        system_energy = 0
-        while system_energy < 0.9999:
+        if auto:
+            system_energy = 0
+            while system_energy < 0.9999:
+                U, s, Vh = np.linalg.svd(snapshot_mat)
+                U_red = U[:, :num_components]
+                s_selected = s[:num_components]
+
+                system_energy = np.sum(s_selected) / np.sum(s)
+                num_components += 1
+
+            print(f"SVD completed with {system_energy} % of the system energy explained")
+            print(f"The number of singular values used (truncation threshold) is {num_components}")
+
+            if plot:
+                # plot of the explained variance of the system
+                plt.figure()
+                plt.plot(np.cumsum(s), "-o", label="Singular Values")
+                plt.ylabel("Explained variance ratio")
+                plt.xlabel("Singular values")
+                plt.legend()
+                plt.title("Explained variance of the system")
+                plt.show()
+                # plot the singular values
+                plt.figure()
+                plt.semilogy(s, "-o", label='Singular Values')
+                plt.ylabel("Value of each singular value")
+                plt.xlabel("Singular values")
+                plt.legend()
+                plt.title("Singular values")
+                plt.show()
+            print(f"SVD for stacked snapshot matrix X1 finished")
+            # compute the "alpha" projection coefficient of the dataset
+            rank_r_SVD_error = np.sum(s[num_components:] ** 2) / np.linalg.norm(snapshot_mat, ord='fro') ** 2
+            POD_projection_error = 1 - np.sum(s[:num_components] ** 2) / np.sum(s ** 2)
+
+            # Print the LS relative error of rank-r SVD approximation. This error is related to the fraction of kinetic energy
+            # that is missing in the approximation of the snapshot matrix
+            print(f"The relative rank-r SVD approximation error is {rank_r_SVD_error * 100}%")
+            print(
+                f"The relative error of POD projection is {POD_projection_error * 100}%\nThis is "
+                f"the cumulative energy not captured by the projection")
+
+            return U_red, system_energy
+
+        else:
             U, s, Vh = np.linalg.svd(snapshot_mat)
-            U_red = U[:, :num_components]
             s_selected = s[:num_components]
 
             system_energy = np.sum(s_selected) / np.sum(s)
-            num_components += 1
+            POD_projection_error = 1 - np.sum(s[:num_components] ** 2) / np.sum(s ** 2)
 
-        print(f"SVD completed with {system_energy} % of the system energy explained")
-        print(f"The number of singular values used (truncation threshold) is {num_components}")
-        # plot of the explained variance of the system
-        plt.figure()
-        plt.plot(np.cumsum(s), "-o", label="Singular Values")
-        plt.ylabel("Explained variance ratio")
-        plt.xlabel("Singular values")
-        plt.legend()
-        plt.title("Explained variance of the system")
-        plt.show()
-        # plot the singular values
-        plt.figure()
-        plt.semilogy(s, "-o", label='Singular Values')
-        plt.ylabel("Value of each singular value")
-        plt.xlabel("Singular values")
-        plt.legend()
-        plt.title("Singular values")
-        plt.show()
-        print(f"SVD for stacked snapshot matrix X1 finished")
-        # compute the "alpha" projection coefficient of the dataset
-        rank_r_SVD_error = np.sum(s[num_components:] ** 2) / np.linalg.norm(snapshot_mat, ord='fro') ** 2
-        POD_projection_error = 1 - np.sum(s[:num_components] ** 2) / np.sum(s ** 2)
-
-        # Print the LS relative error of rank-r SVD approximation. This error is related to the fraction of kinetic energy
-        # that is missing in the approximation of the snapshot matrix
-        print(f"The relative rank-r SVD approximation error is {rank_r_SVD_error * 100}%")
-        print(
-            f"The relative error of POD projection is {POD_projection_error * 100}%\nThis is "
-            f"the cumulative energy not captured by the projection")
-
-        return U_red
+            return system_energy, POD_projection_error
 
     def train_fnn(self, reduced_output, fnn_depth, fnn_width, reduced_state_mat, epochs, batch_size_frac, verbose):
         """
@@ -207,9 +219,15 @@ class ParametricLANDO:
         TestSamples = self.num_test_samples
 
         ###The actual parametric samples
-        X_train = self.samples[self.train_samples, :]
-        X_valid = self.samples[self.valid_samples, :]
-        X_test = self.samples[self.test_samples, :]
+
+        if self.problem == "heat":
+            X_train = self.samples[self.train_samples].reshape(-1, 1)
+            X_valid = self.samples[self.valid_samples].reshape(-1, 1)
+            X_test = self.samples[self.test_samples].reshape(-1, 1)
+        else:
+            X_train = self.samples[self.train_samples, :]
+            X_valid = self.samples[self.valid_samples, :]
+            X_test = self.samples[self.test_samples, :]
 
         y_train = reduced_state_mat[:, self.train_samples].T
         y_valid = reduced_state_mat[:, self.valid_samples].T
@@ -222,8 +240,13 @@ class ParametricLANDO:
         valid_loader = DataLoader(dataset=dataset_valid, batch_size=int(ValidSamples * batch_size_frac))
 
         ###  Set up the neural network to learn the mapping
-        Mapping_FNN = FNN(num_input=self.samples.shape[1],
-                          num_output=reduced_output, depth=fnn_depth, width=fnn_width)
+        if self.problem == "heat":
+            Mapping_FNN = FNN(num_input=1,
+                              num_output=reduced_output, depth=fnn_depth, width=fnn_width)
+
+        else:
+            Mapping_FNN = FNN(num_input=self.samples.shape[1],
+                              num_output=reduced_output, depth=fnn_depth, width=fnn_width)
 
         optimizer = torch.optim.Adam(Mapping_FNN.parameters(), lr=1e-4)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.04, patience=3)
@@ -274,12 +297,12 @@ class ParametricLANDO:
                 best_model_weights = Mapping_FNN.state_dict()
 
             ### Stop the training process if validation error < 0.7%
-            if mean_relative_err_val < 0.006:
+            if mean_relative_err_val < 0.0065:
                 print(f"Stopping early at epoch {epoch}, since mean_relative_err_val < 0.006")
                 break
 
             ### Reduce the learning rate when we have validation error < 0.95%
-            if mean_relative_err_val < 0.0065:
+            if mean_relative_err_val < 0.007:
                 scheduler.step(mean_relative_err_val)
             if verbose:
                 print(f"Epoch   Training   Validation\n"
@@ -307,7 +330,7 @@ class ParametricLANDO:
         Mapping_FNN.eval()
         prediction = Mapping_FNN(torch.from_numpy(X_test).to(torch.float32))
 
-        mean_relative_error = self.relative_error(y_test=y_test, prediction=prediction, tensor=True)
+        mean_relative_error, _ = self.relative_error(y_test=y_test, prediction=prediction, tensor=True)
 
         print(f"FNN Training, Mean test error, {TestSamples} samples: {mean_relative_error}")
 
@@ -318,9 +341,11 @@ class ParametricLANDO:
         Function that transforms the data from python to FreeFem format.
         This is important, to later visualise the results as .vtk files in Paraview
         :param predictions: The predicted states of the system for different parameter values, ready to be visualised
+        :param T_test: time instance for which the prediction is performed
         :return:
         """
-        vertices = predictions[0].shape[0]
+
+        vertices = predictions[0].shape[1]
         directory = self.directory_samples.replace("/Parameter_Samples", "") + f'/Predicted_Data/t_test = {T_test}'
 
         for i, vector in enumerate(predictions):
@@ -329,8 +354,8 @@ class ParametricLANDO:
             filepath = os.path.join(directory, filename)
             with open(filepath, 'w') as f:
                 f.write(str(vertices) + '\t\n')
-                for i in range(0, len(vector), 5):
-                    row = vector[i:i + 5]
+                for i in range(0, len(vector.T.reshape(-1)), 5):
+                    row = vector.T.reshape(-1)[i:i + 5]
                     row_str = '\t'.join(map(str, row))
                     f.write('\t' + row_str + '\t\n')
 
@@ -341,19 +366,24 @@ class ParametricLANDO:
         :param test_instance: The unseen test data
         :return:
         """
-
         ### First, we evaluate the mapping on the test samples
         test_samples = self.samples[self.test_samples]
         errors_parametric_prediction = []
         x_fom_predictions = []
         x_reference = []
         for i in self.test_samples:
-            x_true = np.load(self.directory_data + f"/sample{i}.npy")[:, test_instance]
+            x_true = np.load(self.directory_data + f"/sample{i}.npy")[:, :test_instance][:, -1]
             x_reference.append(x_true)
 
-            sample = self.samples[i, :]
+            if self.problem == "heat":
+                sample = self.samples[i].reshape(-1, 1)
+            else:
+                sample = self.samples[i, :]
             x_pred_reduced = model_interp(torch.tensor(sample, dtype=torch.float32)).detach().numpy()
-            x_pred_fom = self.U @ x_pred_reduced
+            if self.problem == "heat":
+                x_pred_fom = x_pred_reduced @ self.U.T
+            else:
+                x_pred_fom = self.U @ x_pred_reduced
             x_fom_predictions.append(x_pred_fom)
 
             relative_error_pred = np.linalg.norm(x_true - x_pred_fom) / np.linalg.norm(x_true)
@@ -364,122 +394,27 @@ class ParametricLANDO:
 
         return x_fom_predictions, x_reference
 
-    def Visual_2D(self, x_train, x_test, model_interp, T_end_test, lando_predict_rel_errors,
-                  test_instance, directory_save):
-        """
-        Method that produces 2-dimensional plots/results of the pLANDO predictive performance
-        :param x_train:
-        :param x_test:
-        :param model_interp: The model that emulates the mapping
-        :param T_end_test: The timestep t^* for which the prediction takes place
-        :param lando_predict_rel_errors: the relative errors of nonparametric LANDO Vs Ground Truth
-        :param test_instance: Needed to access the generated data
-        :param directory_save:  DIrectory to which we save the data
-        :return:
-        """
+    def Calc_Errors(self, x_train, x_test, model_interp, test_instance):
 
         y_train = []
         for i in self.train_samples:
-            true_state = np.load(self.directory_data + f"/sample{i}.npy")[:, test_instance]
+            true_state = np.load(self.directory_data + f"/sample{i}.npy")[:, :test_instance][:, -1]
             y_train.append(true_state)
         y_train = np.vstack(y_train)
 
         y_test = []
         for i in self.test_samples:
-            true_state = np.load(self.directory_data + f"/sample{i}.npy")[:, test_instance]
+            true_state = np.load(self.directory_data + f"/sample{i}.npy")[:, :test_instance][:, -1]
             y_test.append(true_state)
         y_test = np.vstack(y_test)
 
         y_final_pred_train = self.U @ model_interp(torch.from_numpy(x_train).to(torch.float32)).detach().numpy().T
-        train_error = self.relative_error(y_train, y_final_pred_train.T, mean=False, tensor=False)
+        train_error_mean, _ = self.relative_error(y_train, y_final_pred_train.T, tensor=False)
 
         y_final_pred_test = self.U @ model_interp(torch.from_numpy(x_test).to(torch.float32)).detach().numpy().T
-        test_error = self.relative_error(y_test, y_final_pred_test.T, mean=False, tensor=False)
+        test_error_mean, test_error_std = self.relative_error(y_test, y_final_pred_test.T, tensor=False)
 
-        directory = directory_save + f"/t_test={T_end_test}"
-
-        ### Visualise the performance for training
-        plt.figure()
-        plt.scatter(x_train[:, 0], x_train[:, 1], c=train_error, cmap="plasma")
-        if self.problem == "heat":
-            plt.xlabel(r"$\mu_1 = D$")
-            plt.ylabel(r"$\mu_2 = \alpha$")
-        else:
-            plt.xlabel(r"$\mu_1 = \lambda$")
-            plt.ylabel(r"$\mu_2 = \epsilon$")
-        filename = "Training.png"
-        plt.colorbar(label=r'$L_2$ relative error')
-        plt.savefig(directory + filename)
-        plt.show()
-
-        ### Testing performance
-        plt.figure()
-        plt.scatter(x_test[:, 0], x_test[:, 1], c=test_error, cmap="plasma")
-        if self.problem == "heat":
-            plt.xlabel(r"$\mu_1 = D$")
-            plt.ylabel(r"$\mu_2 = \alpha$")
-        else:
-            plt.xlabel(r"$\mu_1 = \lambda$")
-            plt.ylabel(r"$\mu_2 = \epsilon$")
-        filename = "Test.png"
-        plt.colorbar(label=r'$L_2$ relative error')
-        plt.savefig(directory + filename)
-        plt.show()
-
-        ### LANDO Vs Ground Truth
-        lando_error_train_samples = lando_predict_rel_errors[:len(self.train_samples)]
-        plt.figure()
-        plt.scatter(x_train[:, 0], x_train[:, 1], c=lando_error_train_samples, cmap="plasma")
-        if self.problem == "heat":
-            plt.xlabel(r"$\mu_1 = D$")
-            plt.ylabel(r"$\mu_2 = \alpha$")
-        else:
-            plt.xlabel(r"$\mu_1 = \lambda$")
-            plt.ylabel(r"$\mu_2 = \epsilon$")
-        filename = "LANDO_Vs_Truth_TRAIN.png"
-        plt.colorbar(label=r'LANDO $L_2$ relative error')
-        plt.savefig(directory + filename)
-        plt.show()
-
-        lando_error_test_samples = lando_predict_rel_errors[(len(self.train_samples) + len(self.valid_samples)):]
-        plt.figure()
-        plt.scatter(x_test[:, 0], x_test[:, 1], c=lando_error_test_samples, cmap="plasma")
-        if self.problem == "heat":
-            plt.xlabel(r"$\mu_1 = D$")
-            plt.ylabel(r"$\mu_2 = \alpha$")
-        else:
-            plt.xlabel(r"$\mu_1 = \lambda$")
-            plt.ylabel(r"$\mu_2 = \epsilon$")
-        filename = "LANDO_Vs_Truth_TEST.png"
-        plt.colorbar(label=r'LANDO $L_2$ relative error')
-        plt.savefig(directory + filename)
-        plt.show()
-
-        return np.mean(train_error), np.mean(test_error), np.std(train_error), np.std(test_error)
-
-    def LANDO_Vs_GrTr(self, X_true_all, X_lando_all):
-        """
-        Method that calculates the discrepancy (if any) of LANDO prediction Vs Ground truth
-        :param X_true_all: Reference dynamics
-        :param X_lando_all: LANDO prediction of the dynamics
-        :return:
-        """
-
-        train_horizon = int(self.T_end_train / self.dt)
-        train_x_true = [X_true_all[i][:, :train_horizon] for i in range(len(X_true_all))]
-        train_x_lando = [X_lando_all[i][:, :train_horizon] for i in range(len(X_lando_all))]
-
-        train_error = [np.linalg.norm(train_x_true[i] - train_x_lando[i]) /
-                       np.linalg.norm(train_x_true[i]) for i in range(self.num_samples)]
-
-        ### Extrapolation in time
-        extrap_x_true = [X_true_all[i][:, train_horizon:] for i in range(len(X_true_all))]
-        extrap_x_lando = [X_lando_all[i][:, train_horizon:] for i in range(len(X_lando_all))]
-
-        extrap_error = [np.linalg.norm(extrap_x_true[i] - extrap_x_lando[i]) /
-                        np.linalg.norm(extrap_x_true[i]) for i in range(self.num_samples)]
-
-        return train_error, extrap_error
+        return train_error_mean, test_error_mean, test_error_std
 
     def Visual_Allen_Cahn(self, x_reference, x_prediction, t_end_test):
         """
@@ -489,7 +424,8 @@ class ParametricLANDO:
         :param t_end_test: The timestep t^* for which the predcition takes place.
         :return:
         """
-
+        dx = 2 / 250
+        os.makedirs("/Users/konstantinoskevopoulos/Documents/Allen_Cahn_Thesis/Prediction_Visual", exist_ok=True)
         directory = f"/Users/konstantinoskevopoulos/Documents/Allen_Cahn_Thesis/Prediction_Visual/t* = {t_end_test}/"
 
         try:
@@ -498,12 +434,25 @@ class ParametricLANDO:
             print('Sth went wrong, please check')
 
         for i in range(len(x_reference)):
+            plt.clf()
             plt.figure()
-            plt.plot(x_reference[i], color='black', label=r'$u_{ref}$', linewidth=2)
-            plt.plot(x_prediction[i], color='red', label=r'$u_{pred}$', linestyle='--')
-            plt.xlabel(r'$x$')
-            plt.ylabel(r'$u(x, t^*)$')
-            plt.legend()
+            params = {
+                'axes.labelsize': 15.4,
+                'font.size': 15.4,
+                'legend.fontsize': 15.4,
+                'xtick.labelsize': 15.4,
+                'ytick.labelsize': 15.4,
+                'text.usetex': False,
+                'axes.linewidth': 2,
+                'xtick.major.width': 2,
+                'ytick.major.width': 2,
+                'xtick.major.size': 2,
+                'ytick.major.size': 2,
+            }
+            plt.rcParams.update(params)
+            plt.plot(np.arange(0, 2, dx), x_reference[i], color='black', label=r'$u_{ref}$', linewidth=2)
+            plt.plot(np.arange(0, 2, dx), x_prediction[i], color='tab:red', label=r'$u_{pred}$', linestyle='--')
+            plt.legend(ncol=2, bbox_to_anchor=(0.8, 1.14), frameon=False)
             plt.grid(True)
             filename = f"Prediction_test_sample_{i}, mu={self.samples[i]}.png"
             plt.savefig(directory + filename)
@@ -566,8 +515,8 @@ class ParametricLANDO:
 
         return np.mean(reconstruction_relative_errors), self.SparseDicts_all
 
-    def OnlinePhase(self, T_end_test, trunk_rank, fnn_depth, fnn_width, batch_size, epochs, directory_save,
-                    verbose=True):
+    def OnlinePhase(self, T_end_test, trunc_rank, fnn_depth, fnn_width, batch_size, epochs,
+                    verbose=True, pod_experiment=False, pod_plando_err_exp=False):
         ### For all parameters in train + test + validation set run the LANDO algorithm to compute the dynamics until T_end_test (t*)
         ### T_end_test = t* > horizon_train = T_end_train_
         test_instance = int(T_end_test / self.dt)
@@ -616,9 +565,13 @@ class ParametricLANDO:
         ### Perform the SVD to the X_lando matrix
         ### The reduced matrix contains all the parametric samples (training + test +validation)
         X1_lando = np.vstack(X_lando).T
+        if not pod_experiment:
+            self.U, energy_capt = self.SVD(trunc_rank, X1_lando)
+            X_reduced_mi_lando = self.U.T @ X1_lando
 
-        self.U = self.SVD(trunk_rank, X1_lando)
-        X_reduced_mi_lando = self.U.T @ X1_lando
+        else:
+            system_energy, pod_error = self.SVD(trunc_rank, X1_lando, auto=False)
+            return system_energy, pod_error
 
         ### Now we employ the NN to learn the mapping from parameter space to the reduced state of the system.
 
@@ -632,15 +585,13 @@ class ParametricLANDO:
         ### Now, we evaluate the mapping on the test samples
         x_fom_predictions, x_true = self.Test_Eval(model_interp=I_Mapping, test_instance=test_instance)
 
-        mean_train_error, mean_test_error, std_train_error, std_test_error = self.Visual_2D(x_train=X_train,
-                                                                                            x_test=X_test,
-                                                                                            model_interp=I_Mapping,
-                                                                                            T_end_test=T_end_test,
-                                                                                            lando_predict_rel_errors=reconstruction_relative_errors,
-                                                                                            test_instance=test_instance,
-                                                                                            directory_save=directory_save)
+        mean_train_error, mean_test_error, std_test_error = self.Calc_Errors(x_train=X_train,
+                                                                             x_test=X_test,
+                                                                             model_interp=I_Mapping,
 
-        lando_train, lando_extrap = self.LANDO_Vs_GrTr(X_true_all=X_true_all, X_lando_all=X_lando_all)
+                                                                             test_instance=test_instance)
+        if pod_plando_err_exp:
+            return [mean_train_error, mean_test_error, std_test_error, energy_capt]
 
         if self.problem == 'heat':
             ### Create directory to store prediction data
@@ -660,4 +611,4 @@ class ParametricLANDO:
         else:
             self.Visual_Allen_Cahn(x_reference=x_true, x_prediction=x_fom_predictions, t_end_test=T_end_test)
 
-        return [mean_train_error, mean_test_error, std_train_error, std_test_error, lando_train, lando_extrap]
+        return [mean_train_error, mean_test_error, std_test_error, energy_capt]

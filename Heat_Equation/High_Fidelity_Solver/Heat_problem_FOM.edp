@@ -1,0 +1,74 @@
+// Parameters of the simulation
+real Tend = 4.0;
+real dt = 0.01;
+
+// Regarding the mesh
+int mnum = 60;
+real L = 5.0;
+
+// Read the parameters alpha and D
+real SampleSize = 300.;
+real initcond = 0.6;
+
+
+string DirectorySamples = "/Users/konstantinoskevopoulos/Documents/Heat_Eq_Thesis/Parameter_Samples/";
+string DirectoryData = "/Users/konstantinoskevopoulos/Documents/Heat_Eq_Thesis/SnapshotData/";
+
+ifstream file(DirectorySamples+"samples_heat_eq.txt");
+
+real[int] Mu1(SampleSize);
+
+
+
+// Read data from the file into arrays
+for (int i = 0; i < SampleSize; ++i) {
+    file >> Mu1[i];
+}
+
+
+for (int sample = 0; sample <= SampleSize; sample++){
+
+    real cpu=clock();
+
+    real diffcoeff = Mu1[sample];
+
+    // Construct mesh
+
+    border C1(t = 0, L){ x = t; y = 0; label = 1; } // (bottom of the mesh)
+    border C2(t = 0, L){ x = L; y = t; label = 2; } // (right of the mesh)
+    border C3(t = 0, L){ x = L-t; y = L; label = 3; } // (top of the mesh )
+    border C4(t = 0, L){ x = 0; y = L-t; label = 4; } //  (left of the mesh )
+    mesh Th = buildmesh( C1(mnum) + C2(mnum) + C3(mnum) + C4(mnum)); // same number of elements in every edge
+    cout << "Number of Elements: " + Th.nt << endl;
+    // plot(Th, wait=1);
+
+    // Finite element space
+    fespace Vh(Th, P1); // P1 elements (linear)
+    Vh uu, u, v; // uu: previous time step, u: current time step, v: test function
+
+
+    // Initial condition
+    uu = tanh( (initcond * sin(0.2 * pi * x)) / (1 - initcond * cos(0.2 * pi * x)) )
+                * tanh( (initcond * sin(0.2 * pi * y)) / (1 - initcond * cos(0.2 * pi * y)) );
+
+
+    problem heat(u, v) = int2d(Th)(u * v / dt + diffcoeff * (dx(u) * dx(v) + dy(u) * dy(v)))
+                        - int2d(Th)(uu * v / dt)
+                        + on(C1, C2, C3, C4, u = 0);
+
+
+    // Time stepping loop
+    for (int t = 0; t < Tend/dt; ++t) {
+        heat;
+        uu = u;
+
+        plot(u, wait=false, value=true, fill=true, cmm="t="+t*dt+", alpha="+initcond+", D="+diffcoeff);
+
+        {ofstream fout(DirectoryData+"mu"+sample+"/t="+t+".txt");
+            fout << u[]<< endl;}
+
+    }
+
+    cout << sample+"/"+SampleSize+" completed, alpha="+initcond+", D="+diffcoeff << endl;
+    cout << "CPU time = " << (clock()-cpu) << endl;
+}

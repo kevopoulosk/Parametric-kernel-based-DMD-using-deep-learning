@@ -11,7 +11,7 @@ def Permute(X):
     :param X: The snapshot matrix
     :return: The same snapshot matrix, with randomly permuted columns.
     """
-
+    np.random.seed(0)
     random_permutation = np.random.permutation(X.shape[1])
 
     Permuted_X = X[:, random_permutation]
@@ -134,7 +134,7 @@ def Predict(model, Tend, IC, dt=None, comp=None, sensors=300, type="Cont"):
     """
     if type == "Cont":
         t = np.linspace(0, Tend, sensors)
-        sol = solve_ivp(model, [0, Tend], IC, t_eval=t)
+        sol = solve_ivp(model, [0, Tend], IC, t_eval=t, method='BDF')
         return sol.y
     else:
         dof = IC.shape[0]

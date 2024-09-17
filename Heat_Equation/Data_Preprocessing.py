@@ -26,7 +26,7 @@ def extract_vertices(directory_to_txt):
     ### Create a list and copy out all the boundary vertices
     VerticeList = []
 
-    for i in range(1,l_num+1):
+    for i in range(1, l_num+1):
         with open(directory_to_txt,'r') as txt:
 
             text = txt.readlines()
@@ -58,7 +58,7 @@ def vertices_num(directory_to_txt):
 DirectoryData = "/Users/konstantinoskevopoulos/Documents/Heat_Eq_Thesis/SnapshotData"
 DirectoryProcessed = "/Users/konstantinoskevopoulos/Documents/Heat_Eq_Thesis/SnapshotData_Processed"
 SampleSize = 300
-T_end = 5
+T_end = 4
 dt = 0.01
 t_span = np.linspace(dt, T_end, int(T_end/dt))
 

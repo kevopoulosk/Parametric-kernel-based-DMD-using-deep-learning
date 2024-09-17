@@ -1,7 +1,9 @@
 /////This file aim to read the discrete node value from high-fidelity data
-/////And save them to Error/Sample_X/Error.vtk
 load "iovtk"
 int[int] orderOut = [1, 1, 1, 1];
+
+///// Time for which the prediction is performed
+int Timetest = 0.45;
 
 string VtkDirectory = "/Users/konstantinoskevopoulos/Documents/Heat_Eq_Thesis/Predicted_Data_vtk/";
 string PredictedDirectory = "/Users/konstantinoskevopoulos/Documents/Heat_Eq_Thesis/Predicted_Data/";
@@ -9,9 +11,9 @@ string FOMDirectory = "/Users/konstantinoskevopoulos/Documents/Heat_Eq_Thesis/Sn
 
 
 /////Sample loop
-//// 125 are the test samples. If we assume another number of test samples, then this value should be changed accordingly
-for (int SamNum=0;SamNum<125;SamNum++)
-{	
+//// 100 are the test samples. If we assume another number of test samples, then this value should be changed accordingly
+for (int SamNum=0;SamNum<100;SamNum++)
+{
 	cout << "Processing sample" << SamNum << endl;
 	///// Read in the mesh
 	mesh Th = readmesh("heat_problem_mesh.msh");
@@ -20,18 +22,18 @@ for (int SamNum=0;SamNum<125;SamNum++)
 		fespace Vh(Th, P1);
 		Vh u, upred;
 
-		///// Read in the velocity field files u(t)
+		///// Read in the temperature files u(t)
 		///// Here t = t*, the "t" for which we want to make the prediction
-		///// 375 is the number of training samples. Again, for a different number of training samples, this value should be adjusted
-		///// Always:  train_samples + test_samples = 500
-		ifstream ufile(FOMDirectory+"mu"+(375+SamNum)+"/t=4.2.txt");
+		///// 201 is the number of training samples. Again, for a different number of training samples, this value should be adjusted
+		///// Always:  train_samples + test_samples = 300
+		ifstream ufile(FOMDirectory+"mu"+(201+SamNum)+"/t=4.txt");
 			ufile >> u[];
-		
 
-		ifstream upredfile(PredictedDirectory+"predict_test_"+SamNum+".txt");
+
+		ifstream upredfile(PredictedDirectory+"t_test = 4/predict_test_"+SamNum+".txt");
 			upredfile >> upred[];
-		
 
-		savevtk(VtkDirectory+"predicted_test_"+SamNum+".vtk",Th,u,upred,u-upred,dataname="utru upred uerr",order=orderOut);
+
+		savevtk(VtkDirectory+"/t_test = 4/predicted_test_"+SamNum+".vtk",Th,u,upred,u-upred,dataname="utru upred uerr",order=orderOut);
 
 }

@@ -1,7 +1,6 @@
 ### This file generates the parametric samples for the Allen Cahn equation.
-### The samples are collcted with the Latin Hypercube Sampling method
-import numpy as np
-import matplotlib.pyplot as plt
+### The samples are collcted via Latin Hypercube sampling
+
 from scipy.stats import qmc
 import os
 from tqdm import tqdm
@@ -11,7 +10,6 @@ from Allen_Cahn_equation import *
 def LatinHypercube(dim_sample, low_bounds, upp_bounds, num_samples):
     """
     Function that is used to sample the parameters from a latin hypercube.
-    Later, the active learning/adaptive sampling technique will be used instead.
     :param dim_sample: The dimension that we sample
     :param low_bounds: lower bound of the sampling interval
     :param upp_bounds: upper bound of the sampling interval
@@ -27,22 +25,15 @@ def LatinHypercube(dim_sample, low_bounds, upp_bounds, num_samples):
     return sample_params
 
 
-def GenerateSamples(num_samples, active=False, plot=False):
-    """
-    Function that generates samples, and stores them in the computer (local memory)
-    :param num_samples: Number of samples to be generated
-    :param active: Boolean: Whether or not active learning is performed
-    :param plot: Boolean: Whether or not to plot specific results
-    :return:
-    """
+def GenerateSamples(num_samples, plot=False):
 
     directory_samples = '/Users/konstantinoskevopoulos/Documents/Allen_Cahn_Thesis/Parameter_Samples/'
     directory = '/Users/konstantinoskevopoulos/Documents/Allen_Cahn_Thesis/'
 
-    if active:
-        directory_data = directory + 'Active_Learning_Data/'
-    else:
-        directory_data = directory + 'SnapshotData/'
+    os.makedirs(directory_samples, exist_ok=True)
+
+    directory_data = directory + 'SnapshotData/'
+    os.makedirs(directory_data, exist_ok=True)
 
     samples = LatinHypercube(dim_sample=2, low_bounds=[0.0001, 0.5], upp_bounds=[0.001, 4], num_samples=num_samples)
 
@@ -71,6 +62,8 @@ def GenerateSamples(num_samples, active=False, plot=False):
         plt.title("Parameter space of the Allen-Cahn equation")
         plt.show()
 
+
+GenerateSamples(num_samples=1000)
 
 
 
