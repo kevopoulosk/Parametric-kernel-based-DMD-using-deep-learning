@@ -51,7 +51,7 @@ for init in Init_Conditions:
         except:
             print('Sth went wrong, please check')
 
-        interp_model, X_train, y_train, X_valid, y_valid, _, _, reconstruct_rel_errs = parametric_lando.OnlinePhase(
+        interp_model, X_train, y_train, X_valid, y_valid, _, reconstruct_rel_errs = parametric_lando.OnlinePhase(
             T_end_test=t,
             fraction_train=train_frac,
             fnn_depth=depth, fnn_width=width,

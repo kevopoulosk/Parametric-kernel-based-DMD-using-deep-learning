@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+import numpy as np
 from scipy.stats import qmc
 from Parametric_LANDO.Sparse_Dictionary_Learning import *
 from torch.utils.data import DataLoader
@@ -7,7 +8,7 @@ import torch.utils.data as data
 import torch
 from torch import nn
 from tqdm import tqdm
-
+import time
 
 class Snake(nn.Module):
     def __init__(self, alpha=0.5):
@@ -152,6 +153,7 @@ class ParametricLANDO:
             return err_list
 
     def train_fnn(self, fnn_depth, fnn_width, fraction_train, lando_dynamics, epochs, verbose=True):
+        start_train = time.time()
 
         ### Split the parametric samples into training and validation data
         TrainSamples = int(self.param_samples.shape[0] * fraction_train)
@@ -257,6 +259,7 @@ class ParametricLANDO:
 
         if best_model_weights:
             Mapping_FNN.load_state_dict(best_model_weights)
+        end_train = time.time()
 
         Mapping_FNN.eval()
         prediction_train = Mapping_FNN(torch.from_numpy(X_train).to(torch.float32))
@@ -266,6 +269,8 @@ class ParametricLANDO:
         prediction_valid = Mapping_FNN(torch.from_numpy(X_valid).to(torch.float32))
         mean_relative_error_valid = self.relative_error(y_test=y_valid, prediction=prediction_valid,
                                                         tensor=True, mean=False)
+
+        print(f"Execution time for DNN train {end_train - start_train}")
 
         return Mapping_FNN, X_train, y_train, X_valid, y_valid, mean_relative_error_train, mean_relative_error_valid
 
@@ -407,6 +412,7 @@ class ParametricLANDO:
         return train_error_mean, test_error_mean, test_error_std
 
     def OfflinePhase(self):
+        start_offline = time.time()
 
         params_not_varied = np.tile(self.params_fixed, (self.num_samples, 1))
 
@@ -421,14 +427,21 @@ class ParametricLANDO:
         Y_vals = []
         Y_perm_all = []
         X_all = []
+        exec_times = []
 
         ### The sparse dictionaries for all the parametric samples (train + valid OR train+test+valid) are generated
         ### So, for each training sample we have W_tilde, x_tilde(sparse dictionary), and k(x_tilde, x)
         pbar = tqdm(total=self.param_samples.shape[0], desc=f"Offline Phase -> Generation of training data...")
         for val, param_sample in enumerate(self.param_samples):
+            start_time = time.time()
             X, _ = self.X_Snapshot(params=param_sample, T=self.T_end_train, num_sensors=self.num_sensors)
 
             Y = self.Y_Deriv(X, *param_sample)
+            end_time = time.time()
+
+            exec_time = end_time - start_time
+            exec_times.append(exec_time)
+
 
             scaledX = Scale(X)
 
@@ -460,11 +473,10 @@ class ParametricLANDO:
 
         models = [W_tilde_mat @ kernel_mat for W_tilde_mat, kernel_mat in zip(self.W_tildes, kernels)]
 
-        ### Compute the reconstruction error to make sure it is sufficiently small
-        reconstruction_relative_errors = [np.linalg.norm(Y_vals[i] - models[i]) / np.linalg.norm(Y_vals[i])
-                                          for i in range(len(Y_vals))]
+        end_offline = time.time()
 
-        print(f"Training Data: The mean relative reconstruction errors are: {reconstruction_relative_errors}")
+        print(f"Mean execution time per sample: {np.mean(exec_times)}")
+        print(f"Execution time of offline phase: {end_offline- start_offline}")
 
         return self.W_tildes, self.SparseDicts_all, self.param_samples
 
@@ -484,6 +496,8 @@ class ParametricLANDO:
         :param epochs: Epochs that the neural network is trained for
         :return:
         """
+
+        start_online = time.time()
         self.T_test = T_end_test
         self.ic_predict = IC_predict
         self.train_frac = fraction_train
@@ -496,10 +510,10 @@ class ParametricLANDO:
         for i, sample in enumerate(self.param_samples):
             ### This is to compare with the predicted value
 
-            X, _ = self.X_Snapshot(params=sample, T=self.T_test, num_sensors=self.num_sensors,
-                                   x0=self.ic_predict[0], y0=self.ic_predict[1])
-
-            true_dynamics.append(X)
+            # X, _ = self.X_Snapshot(params=sample, T=self.T_test, num_sensors=self.num_sensors,
+            #                        x0=self.ic_predict[0], y0=self.ic_predict[1])
+            #
+            # true_dynamics.append(X)
 
             def Model_General(t, z):
                 """
@@ -517,13 +531,7 @@ class ParametricLANDO:
 
             pbar.update()
         pbar.close()
-
-        ### Compute reconstruction errors for "x" to make sure they are sufficiently small
-        reconstruction_relative_errors = [
-            np.linalg.norm(true_dynamics[i] - lando_dynamics[i]) / np.linalg.norm(true_dynamics[i])
-            for i in range(len(true_dynamics))]
-
-        print(f"The mean relative reconstruction errors are: {reconstruction_relative_errors}")
+        end_online = time.time()
 
         interp_model, X_train, y_train, X_valid, y_valid, rel_err_train, rel_err_valid = self.train_fnn(
             fnn_depth=fnn_depth,
@@ -533,10 +541,14 @@ class ParametricLANDO:
             epochs=epochs,
             verbose=verb)
 
-        return interp_model, X_train, y_train, X_valid, y_valid, rel_err_train, rel_err_valid, reconstruction_relative_errors
+        print(f"Execution time of online phase: {end_online - start_online}")
+
+        return interp_model, X_train, y_train, X_valid, y_valid, rel_err_train, rel_err_valid
 
     def TestPhase(self, num_samples_test, interp_model, x_train, y_train,
                   reconstruction_relative_errors, directory_1d, visuals=True):
+
+
 
         ### First, we generate the test data --> new parameters to test for the specific T_end_test (t*)
         param_samples_lh_test = LatinHypercube(dim_sample=self.num_params_varied, low_bounds=self.low_bounds,
@@ -565,15 +577,19 @@ class ParametricLANDO:
 
         y_test = np.vstack([true_dynamics_test[i] for i in range(TestSamples)])
 
+        start_test = time.time()
         ### For all unseen test parameters, evaluate the neural network after training and approximate f(x,t*;mu*)
         interp_model.eval()
         prediction = interp_model(torch.from_numpy(X_test).to(torch.float32))
+
+        end_test = time.time()
 
         mean_relative_errors, std_relative_errors = self.relative_error(y_test=y_test,
                                                                         prediction=prediction,
                                                                         tensor=True)
 
         print(f"NN mean test error: {mean_relative_errors}, {TestSamples} test samples")
+        print(f"Execution time for testing: {(end_test-start_test)/X_test.shape[0]}")
 
         if visuals:
 

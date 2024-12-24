@@ -50,10 +50,10 @@ for t in test_t_instances:
     dict_errors[f"t = {t}"].append(error_results)
     pbar.update()
 pbar.close()
-
-### Save data from this run into dictionary form
-with open('errors_dict.pkl', 'wb') as f:
-    pickle.dump(dict_errors, f)
+#
+# ### Save data from this run into dictionary form
+# with open('errors_dict.pkl', 'wb') as f:
+#     pickle.dump(dict_errors, f)
 
 num_bases = np.arange(2, 32, 2)
 system_energies = []
@@ -85,7 +85,7 @@ params = {
 }
 plt.rcParams.update(params)
 
-fig, ax1 = plt.subplots()
+fig, ax1 = plt.subplots(figsize=(7.4, 4.75))
 
 ax1.plot(num_bases, [100*system_energies[i] for i in range(len(system_energies))], '-o', color='tab:blue')
 ax1.tick_params(axis='y', labelcolor='tab:blue')

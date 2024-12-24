@@ -5,6 +5,7 @@ from scipy.stats import qmc
 import os
 from tqdm import tqdm
 from Allen_Cahn_equation import *
+import time
 
 
 def LatinHypercube(dim_sample, low_bounds, upp_bounds, num_samples):
@@ -44,16 +45,22 @@ def GenerateSamples(num_samples, plot=False):
     np.savetxt(file_path_data, samples)
 
     pbar = tqdm(total=samples.shape[0], desc="Data Generation...")
+    exec_times = []
     for i in range(samples.shape[0]):
         folder_name = f'mu{i}'
 
         # Construct the full path to the new folder
         new_folder_path = os.path.join(directory_data, folder_name)
 
+        start_time = time.time()
         X = Allen_Cahn_eq(D=samples[i][0], a=samples[i][1])
+        end_time = time.time()
+        exec_time = end_time - start_time
+        exec_times.append(exec_time)
         np.save(directory_data+f"sample{i}", X)
         pbar.update()
     pbar.close()
+    print(f"Mean execution time per sample: {np.mean(exec_times)}")
 
     if plot:
         plt.plot(samples[:, 0], samples[:, 1], 'o')

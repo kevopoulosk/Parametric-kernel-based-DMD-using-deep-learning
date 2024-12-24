@@ -5,6 +5,7 @@ import torch
 import matplotlib.pyplot as plt
 from torch import nn
 import os
+import time
 
 
 class FNN(nn.Module):
@@ -212,7 +213,7 @@ class ParametricLANDO:
         :param verbose: Boolean: Whether or not to print/plot specific results
         :return:
         """
-
+        start_train = time.time()
         ### Split the parametric samples into training and validation data
         TrainSamples = self.num_train_samples
         ValidSamples = self.num_valid_samples
@@ -325,6 +326,7 @@ class ParametricLANDO:
 
         if best_model_weights:
             Mapping_FNN.load_state_dict(best_model_weights)
+        end_train = time.time()
 
         ### For all unseen test parameters, evaluate the neural network after training and approximate f(x,t*;mu*)
         Mapping_FNN.eval()
@@ -333,6 +335,7 @@ class ParametricLANDO:
         mean_relative_error, _ = self.relative_error(y_test=y_test, prediction=prediction, tensor=True)
 
         print(f"FNN Training, Mean test error, {TestSamples} samples: {mean_relative_error}")
+        print(f"Execution time for DNN train {end_train - start_train}")
 
         return Mapping_FNN, X_train, y_train, X_test, y_test, mean_relative_error
 
@@ -379,11 +382,16 @@ class ParametricLANDO:
                 sample = self.samples[i].reshape(-1, 1)
             else:
                 sample = self.samples[i, :]
+
+            start_test = time.time()
             x_pred_reduced = model_interp(torch.tensor(sample, dtype=torch.float32)).detach().numpy()
             if self.problem == "heat":
                 x_pred_fom = x_pred_reduced @ self.U.T
             else:
                 x_pred_fom = self.U @ x_pred_reduced
+
+            end_test = time.time()
+
             x_fom_predictions.append(x_pred_fom)
 
             relative_error_pred = np.linalg.norm(x_true - x_pred_fom) / np.linalg.norm(x_true)
@@ -391,6 +399,8 @@ class ParametricLANDO:
 
         print(
             f"Mean Test Error Prediction VS Ground Truth, {len(test_samples)} samples: {np.mean(errors_parametric_prediction)}")
+
+        print(f"Execution time for testing: {(end_test - start_test) / self.test_samples.shape[0]}")
 
         return x_fom_predictions, x_reference
 
@@ -459,6 +469,7 @@ class ParametricLANDO:
             plt.close()
 
     def OfflinePhase(self):
+        start_offline = time.time()
 
         self.SparseDicts_all = []
         self.scaled_X_all = []
@@ -466,6 +477,7 @@ class ParametricLANDO:
         Y_vals = []
         Y_perm_all = []
         X_all = []
+
         train_horizon = int(self.T_end_train / self.dt)
         ### Load the data (for dynamics up to t = t_train)
         ### For all training + validation + testing parameters, perform the LANDO framework
@@ -505,6 +517,8 @@ class ParametricLANDO:
 
         models = [W_tilde_mat @ kernel_mat for W_tilde_mat, kernel_mat in zip(self.W_tildes, kernels)]
 
+        end_offline = time.time()
+
         ### For sanity check, to ensure that everything is going well
         ### compute reconstruction error (Y - f(x)) to make sure it is small
         reconstruction_relative_errors = [np.linalg.norm(Y_vals[i] - models[i]) / np.linalg.norm(Y_vals[i])
@@ -513,10 +527,14 @@ class ParametricLANDO:
         print(
             f"Mean LANDO training error, {self.num_samples} samples: {np.round(np.mean(reconstruction_relative_errors), decimals=7) * 100}%")
 
+        print(f"Execution time of offline phase: {(end_offline - start_offline)/self.num_samples}")
+
         return np.mean(reconstruction_relative_errors), self.SparseDicts_all
 
     def OnlinePhase(self, T_end_test, trunc_rank, fnn_depth, fnn_width, batch_size, epochs,
                     verbose=True, pod_experiment=False, pod_plando_err_exp=False):
+
+        start_online = time.time()
         ### For all parameters in train + test + validation set run the LANDO algorithm to compute the dynamics until T_end_test (t*)
         ### T_end_test = t* > horizon_train = T_end_train_
         test_instance = int(T_end_test / self.dt)
@@ -547,6 +565,7 @@ class ParametricLANDO:
 
             pbar.update()
         pbar.close()
+        end_online = time.time()
 
         ### sanity check --> compute reconstruction error (x_true - x_pred) to make sure it is small.
         ### This is just for t = t*
@@ -562,8 +581,12 @@ class ParametricLANDO:
 
         print(f"Mean Relative Prediction Errors FOR ALL TIMESTEPS OF X: {reconstruction_errors_all}")
 
+        print(f"Execution time of online phase: {(end_online - start_online)/self.num_samples}")
+
         ### Perform the SVD to the X_lando matrix
         ### The reduced matrix contains all the parametric samples (training + test +validation)
+
+        time_pod_start = time.time()
         X1_lando = np.vstack(X_lando).T
         if not pod_experiment:
             self.U, energy_capt = self.SVD(trunc_rank, X1_lando)
@@ -572,6 +595,12 @@ class ParametricLANDO:
         else:
             system_energy, pod_error = self.SVD(trunc_rank, X1_lando, auto=False)
             return system_energy, pod_error
+
+        time_pod_end = time.time()
+
+        time_pod = time_pod_end - time_pod_start
+
+        print(f"Execution time for POD: {time_pod}")
 
         ### Now we employ the NN to learn the mapping from parameter space to the reduced state of the system.
 
