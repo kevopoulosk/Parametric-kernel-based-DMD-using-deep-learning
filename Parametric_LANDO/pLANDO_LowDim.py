@@ -476,7 +476,7 @@ class ParametricLANDO:
         end_offline = time.time()
 
         print(f"Mean execution time per sample: {np.mean(exec_times)}")
-        print(f"Execution time of offline phase: {end_offline- start_offline}")
+        print(f"Execution time of offline phase: {(end_offline- start_offline)/self.param_samples.shape[0]}")
 
         return self.W_tildes, self.SparseDicts_all, self.param_samples
 
@@ -541,7 +541,7 @@ class ParametricLANDO:
             epochs=epochs,
             verbose=verb)
 
-        print(f"Execution time of online phase: {end_online - start_online}")
+        print(f"Execution time of online phase: {(end_online - start_online)/self.param_samples.shape[0]}")
 
         return interp_model, X_train, y_train, X_valid, y_valid, rel_err_train, rel_err_valid
 
