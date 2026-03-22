@@ -19,8 +19,8 @@ seed = 42
 np.random.seed(42)
 
 T_all = 500
-NumSamples_Train = 400
-NumSamples_Test = 500
+NumSamples_Train = 560
+NumSamples_Test =1200
 
 num_sensors = 1000
 
@@ -31,7 +31,7 @@ Init_Condition = [80, 20]
 
 t_test_times = [300, 450, 500]
 
-param_samples = np.load('../Table_Experiments/LV_1D_param_samples.npy')
+param_samples = np.load('../Table_Experiments/LV_2D_param_samples.npy')
 
 ### Simulate 'high-fidelity' data for the LV system
 X_all = np.empty((NumSamples_Train+NumSamples_Test, 2, num_sensors))
@@ -111,7 +111,7 @@ print(f't^* = 500:', mean_rel_err_500)
 errors_mean.append(mean_rel_err_500)
 errors_std.append(std_rel_err_500)
 
-np.save('LV_rel_errs_mean.npy', errors_mean)
-np.save('LV_rel_errs_std.npy', errors_std)
+np.save('LV_rel_errs_mean_2d.npy', errors_mean)
+np.save('LV_rel_errs_std_2d.npy', errors_std)
 
 
