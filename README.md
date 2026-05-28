@@ -1,4 +1,3 @@
-![fig_github](https://github.com/user-attachments/assets/52756efe-4177-4404-84fc-d0226e7ea0ea)
 ![fig_github](pLANDO_fig.png)
 
 # A parametric framework for kernel-based dynamic mode decomposition using deep learning
