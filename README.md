@@ -63,7 +63,7 @@ Again, results regarding the performance of parametric LANDO in approximating th
 
 
 
-### Important Notes:
+### Notes:
 * In order to run the aforementioned files, please change the names of the directories in the code, to save the results and figures in your local device.
 * Note that FEM simulation for data generation of the heat equation might take a longer time to run than Lotka-Volterra and Allen-Cahn. 
 
